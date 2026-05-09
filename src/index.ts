@@ -9,8 +9,59 @@ import { z } from "zod";
 const API_URL = process.env.SIYUAN_API_URL || "http://127.0.0.1:6806";
 const API_TOKEN = process.env.SIYUAN_API_TOKEN || "";
 
-if (!API_TOKEN) {
-  console.error("[siyuan-agent-mcp] SIYUAN_API_TOKEN is not set. Please set it in your environment.");
+// --- Utility functions ------------------------------------------------------
+
+const MAX_CONTENT_LENGTH = 100_000;
+const SiyuanIdPattern = /^\d{14}-[a-z0-9]{7}$/;
+
+const BLOCK_TYPES = ["p", "h", "l", "u", "o", "b", "c", "m", "t", "query"] as const;
+const BLOCK_TYPE_LABELS: Record<string, string> = {
+  p: "paragraph", h: "heading", l: "list-item", u: "unordered-list",
+  o: "ordered-list", b: "blockquote", c: "code", m: "math",
+  t: "table", query: "embed",
+};
+
+const RESULT_COLUMNS = "id, type, subType, content, box, hpath, parent_id, root_id, created, updated";
+
+function escapeSqlString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+function escapeLikePattern(value: string): string {
+  return value.replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
+function sanitizeUrl(url: string): string {
+  try {
+    const parsed = new URL(url);
+    if (parsed.username || parsed.password) {
+      return url.replace(/\/\/[^@]+@/, "//***:***@");
+    }
+    return url;
+  } catch {
+    return "[redacted]";
+  }
+}
+
+function formatToolResponse(data: unknown) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }],
+  };
+}
+
+/** Convert logical block type to appropriate markdown format */
+function formatBlockContent(type: string, content: string): string {
+  switch (type) {
+    case "h":  return `## ${content}`;
+    case "c":  return `\`\`\`\n${content}\n\`\`\``;
+    case "b":  return `> ${content.replace(/\n/g, "\n> ")}`;
+    case "l":  return `- ${content}`;
+    case "u":  return `- ${content}`;
+    case "o":  return `1. ${content}`;
+    case "m":  return `$$\n${content}\n$$`;
+    case "t":  return `| ${content.replace(/\n/g, " |\n| ")} |`;
+    default:   return content;
+  }
 }
 
 // --- HTTP helper ------------------------------------------------------------
@@ -41,10 +92,15 @@ async function siyuanRequest<T = unknown>(
     });
   } catch (err) {
     console.error(`[siyuan-agent-mcp] Network error calling ${endpoint}:`, err);
-    throw new Error(`Failed to reach SiYuan at ${API_URL}: ${String(err)}`);
+    throw new Error(`Failed to reach SiYuan at ${sanitizeUrl(API_URL)}: ${String(err)}`);
   }
 
-  const json = (await response.json()) as SiYuanResponse<T>;
+  let json: SiYuanResponse<T>;
+  try {
+    json = (await response.json()) as SiYuanResponse<T>;
+  } catch {
+    throw new Error(`SiYuan API returned non-JSON response [${endpoint}]: ${response.status}`);
+  }
 
   if (json.code !== 0) {
     throw new Error(`SiYuan API error [${endpoint}]: code=${json.code} msg="${json.msg}"`);
@@ -56,51 +112,58 @@ async function siyuanRequest<T = unknown>(
 // --- Tool parameter schemas -------------------------------------------------
 
 const SearchNotesSchema = {
-  query: z.string().describe("Full-text search query"),
+  query: z.string().min(1).max(500)
+    .describe("Full-text search query"),
+  limit: z.number().int().min(1).max(200).default(50).optional()
+    .describe("Maximum number of results (1-200, default 50)"),
 };
 
 const SearchBlocksSchema = {
-  type: z
-    .string()
-    .optional()
+  type: z.enum(BLOCK_TYPES).optional()
     .describe("Block type filter, e.g. 'd' for document, 'h' for heading, 'p' for paragraph"),
   limit: z.number().int().min(1).max(200).default(50).optional()
     .describe("Maximum number of results (1-200, default 50)"),
 };
 
 const GetBlockSchema = {
-  blockId: z.string().describe("ID of the block to retrieve"),
+  blockId: z.string().regex(SiyuanIdPattern, "Invalid block ID format (expected YYYYMMDDHHmmss-xxxxxxx)")
+    .describe("ID of the block to retrieve"),
 };
 
 const InsertBlockSchema = {
-  parentId: z.string().describe("ID of the parent block to insert under"),
-  content: z.string().describe("Markdown content for the new block"),
-  type: z
-    .enum(["p", "h", "l", "u", "o", "b", "c", "m", "t", "query"])
-    .default("p")
-    .optional()
-    .describe("Block type (p=paragraph, h=heading, l=list-item, u=unordered-list, o=ordered-list, b=blockquote, c=code, m=math, t=table, query=embed). Default: 'p'"),
+  parentId: z.string().regex(SiyuanIdPattern, "Invalid block ID format")
+    .describe("ID of the parent block to insert under"),
+  content: z.string().min(1).max(MAX_CONTENT_LENGTH)
+    .describe("Markdown content for the new block"),
+  type: z.enum(BLOCK_TYPES).default("p").optional()
+    .describe(`Block type: ${Object.entries(BLOCK_TYPE_LABELS).map(([k, v]) => `${k}=${v}`).join(", ")}. Default: 'p'`),
 };
 
 const UpdateBlockSchema = {
-  blockId: z.string().describe("ID of the block to update"),
-  content: z.string().describe("New markdown content"),
+  blockId: z.string().regex(SiyuanIdPattern, "Invalid block ID format")
+    .describe("ID of the block to update"),
+  content: z.string().min(1).max(MAX_CONTENT_LENGTH)
+    .describe("New markdown content"),
 };
 
 const DeleteBlockSchema = {
-  blockId: z.string().describe("ID of the block to delete"),
+  blockId: z.string().regex(SiyuanIdPattern, "Invalid block ID format")
+    .describe("ID of the block to delete"),
 };
 
 const ListDocsSchema = {
-  notebookId: z.string().optional().describe("Notebook ID filter; omit to list all notebooks"),
+  notebookId: z.string().regex(SiyuanIdPattern, "Invalid notebook ID format").optional()
+    .describe("Notebook ID filter; omit to list all notebooks"),
 };
 
 const CreateDocSchema = {
-  notebookId: z.string().describe("ID of the target notebook"),
-  title: z.string().describe("Title for the new document"),
+  notebookId: z.string().regex(SiyuanIdPattern, "Invalid notebook ID format")
+    .describe("ID of the target notebook"),
+  title: z.string().min(1).max(200)
+    .describe("Title for the new document"),
 };
 
-// --- Utility functions ------------------------------------------------------
+// --- Pick block fields ------------------------------------------------------
 
 interface SiYuanBlock {
   id: string;
@@ -144,15 +207,12 @@ server.tool(
   "search_notes",
   "Full-text search across SiYuan notes. Searches block content and returns matching blocks with their IDs, content, and paths.",
   SearchNotesSchema,
-  async ({ query }) => {
-    const sql = `SELECT * FROM blocks WHERE content LIKE '%${query.replace(/'/g, "''")}%' AND type IN ('d','h','p','l','c','m','b','t','query') LIMIT 50`;
+  async ({ query, limit = 50 }) => {
+    const escaped = escapeLikePattern(escapeSqlString(query));
+    const sql = `SELECT ${RESULT_COLUMNS} FROM blocks WHERE content LIKE '%${escaped}%' ESCAPE '\\' AND type IN ('d','h','p','l','c','m','b','t','query') LIMIT ${limit}`;
     const res = await siyuanRequest<SiYuanBlock[]>(`/api/query/sql`, { stmt: sql });
     const blocks = (res.data ?? []).map(pickBlockFields);
-    return {
-      content: [
-        { type: "text" as const, text: JSON.stringify({ count: blocks.length, blocks }, null, 2) },
-      ],
-    };
+    return formatToolResponse({ count: blocks.length, blocks });
   }
 );
 
@@ -163,18 +223,14 @@ server.tool(
   "List blocks filtered by type. Returns block IDs, types, and content. Use type 'd' for documents, 'h' for headings, 'p' for paragraphs.",
   SearchBlocksSchema,
   async ({ type, limit = 50 }) => {
-    let sql = "SELECT * FROM blocks";
+    let sql = `SELECT ${RESULT_COLUMNS} FROM blocks`;
     if (type) {
-      sql += ` WHERE type = '${type.replace(/'/g, "''")}'`;
+      sql += ` WHERE type = '${escapeSqlString(type)}'`;
     }
     sql += ` LIMIT ${limit}`;
     const res = await siyuanRequest<SiYuanBlock[]>(`/api/query/sql`, { stmt: sql });
     const blocks = (res.data ?? []).map(pickBlockFields);
-    return {
-      content: [
-        { type: "text" as const, text: JSON.stringify({ count: blocks.length, blocks }, null, 2) },
-      ],
-    };
+    return formatToolResponse({ count: blocks.length, blocks });
   }
 );
 
@@ -190,22 +246,11 @@ server.tool(
       siyuanRequest<{ id: string; kramdown: string }>(`/api/block/getBlockKramdown`, { id: blockId }),
     ]);
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify(
-            {
-              id: blockId,
-              attrs: attrsRes.data,
-              kramdown: (kramdownRes.data as { kramdown: string })?.kramdown ?? "",
-            },
-            null,
-            2
-          ),
-        },
-      ],
-    };
+    return formatToolResponse({
+      id: blockId,
+      attrs: attrsRes.data,
+      kramdown: (kramdownRes.data as { kramdown: string })?.kramdown ?? "",
+    });
   }
 );
 
@@ -216,11 +261,7 @@ server.tool(
   "Insert a new block under a parent block. The content is written in markdown.",
   InsertBlockSchema,
   async ({ parentId, content, type = "p" }) => {
-    // Map logical type to SiYuan markdown heading level or default
-    let markdown = content;
-    if (type === "h") {
-      markdown = `## ${content}`;
-    }
+    const markdown = formatBlockContent(type, content);
 
     const res = await siyuanRequest<Array<{ doOperations: Array<{ id: string }> }>>(
       `/api/block/appendBlock`,
@@ -234,14 +275,7 @@ server.tool(
     const ops = res.data?.[0]?.doOperations;
     const newId = ops?.find((op) => op.id)?.id ?? "unknown";
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ insertedBlockId: newId, parentId }, null, 2),
-        },
-      ],
-    };
+    return formatToolResponse({ insertedBlockId: newId, parentId, type });
   }
 );
 
@@ -258,14 +292,7 @@ server.tool(
       id: blockId,
     });
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ updated: blockId }, null, 2),
-        },
-      ],
-    };
+    return formatToolResponse({ updated: blockId });
   }
 );
 
@@ -278,14 +305,7 @@ server.tool(
   async ({ blockId }) => {
     await siyuanRequest(`/api/block/deleteBlock`, { id: blockId });
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ deleted: blockId }, null, 2),
-        },
-      ],
-    };
+    return formatToolResponse({ deleted: blockId });
   }
 );
 
@@ -305,47 +325,31 @@ server.tool(
   ListDocsSchema,
   async ({ notebookId }) => {
     if (notebookId) {
-      // List documents in a specific notebook
-      const sql = `SELECT * FROM blocks WHERE type = 'd' AND box = '${notebookId.replace(/'/g, "''")}' ORDER BY hpath`;
+      const sql = `SELECT ${RESULT_COLUMNS} FROM blocks WHERE type = 'd' AND box = '${escapeSqlString(notebookId)}' ORDER BY hpath`;
       const res = await siyuanRequest<SiYuanBlock[]>(`/api/query/sql`, { stmt: sql });
       const docs = (res.data ?? []).map(pickBlockFields);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({ notebookId, count: docs.length, docs }, null, 2),
-          },
-        ],
-      };
+      return formatToolResponse({ notebookId, count: docs.length, docs });
     }
 
-    // List all notebooks with their documents
     const nbRes = await siyuanRequest<{ notebooks: SiYuanNotebook[] }>(
       `/api/notebook/lsNotebooks`
     );
     const notebooks = nbRes.data.notebooks ?? [];
 
-    const result: Array<{ notebook: SiYuanNotebook; docs: ReturnType<typeof pickBlockFields>[] }> = [];
-
-    for (const nb of notebooks) {
-      const sql = `SELECT * FROM blocks WHERE type = 'd' AND box = '${nb.id.replace(/'/g, "''")}' ORDER BY hpath LIMIT 200`;
+    const docPromises = notebooks.map(async (nb) => {
+      const sql = `SELECT ${RESULT_COLUMNS} FROM blocks WHERE type = 'd' AND box = '${escapeSqlString(nb.id)}' ORDER BY hpath LIMIT 200`;
       try {
         const docRes = await siyuanRequest<SiYuanBlock[]>(`/api/query/sql`, { stmt: sql });
         const docs = (docRes.data ?? []).map(pickBlockFields);
-        result.push({ notebook: nb, docs });
-      } catch {
-        result.push({ notebook: nb, docs: [] });
+        return { notebook: nb, docs };
+      } catch (err) {
+        console.error(`[siyuan-agent-mcp] Failed to list docs for notebook ${nb.id}:`, err);
+        return { notebook: nb, docs: [], error: String(err) };
       }
-    }
+    });
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ notebooks: result }, null, 2),
-        },
-      ],
-    };
+    const result = await Promise.all(docPromises);
+    return formatToolResponse({ notebooks: result });
   }
 );
 
@@ -356,36 +360,42 @@ server.tool(
   "Create a new document in a notebook. The document is created at the root of the notebook.",
   CreateDocSchema,
   async ({ notebookId, title }) => {
+    const safeTitle = title.replace(/[/\\#]/g, "-");
     const res = await siyuanRequest<string>(`/api/filetree/createDocWithMd`, {
       notebook: notebookId,
-      path: `/${title}`,
+      path: `/${safeTitle}`,
       markdown: `# ${title}`,
     });
 
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({ createdDocId: res.data, notebookId, title }, null, 2),
-        },
-      ],
-    };
+    return formatToolResponse({ createdDocId: res.data, notebookId, title });
   }
 );
 
 // --- Startup -----------------------------------------------------------------
 
+function validateApiUrl(url: string): void {
+  try {
+    const parsed = new URL(url);
+    if (parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost" && parsed.protocol !== "https:") {
+      console.error("[siyuan-agent-mcp] WARNING: API_URL is remote but not using HTTPS. Token will be sent in cleartext.");
+    }
+  } catch {
+    console.error("[siyuan-agent-mcp] WARNING: API_URL is not a valid URL.");
+  }
+}
+
 async function main() {
   if (!API_TOKEN) {
-    console.error(
-      "[siyuan-agent-mcp] WARNING: SIYUAN_API_TOKEN is empty. All API calls will fail with auth errors."
-    );
+    console.error("[siyuan-agent-mcp] FATAL: SIYUAN_API_TOKEN is required. Please set it in your environment.");
+    process.exit(1);
   }
+
+  validateApiUrl(API_URL);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error(`[siyuan-agent-mcp] Connected. API: ${API_URL}`);
+  console.error(`[siyuan-agent-mcp] Connected. API: ${sanitizeUrl(API_URL)}`);
 }
 
 main().catch((err) => {
