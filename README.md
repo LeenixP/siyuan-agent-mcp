@@ -46,7 +46,7 @@ Add to your Claude Code `settings.json` (`~/.claude/settings.json`) or project `
   "mcpServers": {
     "siyuan": {
       "command": "npx",
-      "args": ["siyuan-agent-mcp"],
+      "args": ["-y", "siyuan-agent-mcp"],
       "env": {
         "SIYUAN_API_URL": "http://127.0.0.1:6806",
         "SIYUAN_API_TOKEN": "your-api-token-here"
@@ -58,15 +58,16 @@ Add to your Claude Code `settings.json` (`~/.claude/settings.json`) or project `
 
 ### OpenCode
 
-Add to your OpenCode `opencode.json`:
+Add to your OpenCode `opencode.json` under the `mcp` key:
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "siyuan": {
-      "command": "npx",
-      "args": ["siyuan-agent-mcp"],
-      "env": {
+      "type": "local",
+      "enabled": true,
+      "command": ["npx", "-y", "siyuan-agent-mcp"],
+      "environment": {
         "SIYUAN_API_URL": "http://127.0.0.1:6806",
         "SIYUAN_API_TOKEN": "your-api-token-here"
       }
@@ -84,7 +85,7 @@ Add to your Cursor MCP config (`~/.cursor/mcp.json`):
   "mcpServers": {
     "siyuan": {
       "command": "npx",
-      "args": ["siyuan-agent-mcp"],
+      "args": ["-y", "siyuan-agent-mcp"],
       "env": {
         "SIYUAN_API_URL": "http://127.0.0.1:6806",
         "SIYUAN_API_TOKEN": "your-api-token-here"
