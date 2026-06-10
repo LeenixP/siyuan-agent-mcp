@@ -20,7 +20,7 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "siyuan-agent-mcp",
-    version: "2.0.0",
+    version: "2.0.1",
   });
 
   registerNavigateTools(server, client);

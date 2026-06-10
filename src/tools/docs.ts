@@ -30,7 +30,7 @@ export function registerDocTools(server: McpServer, client: SiYuanClient): void 
           .string()
           .max(MAX_CONTENT_LENGTH)
           .optional()
-          .describe("Optional initial GFM Markdown body. The title heading is added automatically."),
+          .describe("Optional initial GFM Markdown body. Do not include a top-level '# title' heading — the title comes from the document name."),
       },
       outputSchema: {
         createdDocId: z.string(),
@@ -56,11 +56,12 @@ export function registerDocTools(server: McpServer, client: SiYuanClient): void 
           }
           path = `${parentHpath}/${safeTitle}`;
         }
-        const body = markdown ? `# ${title}\n\n${markdown}` : `# ${title}`;
+        // The document title is derived from `path`; do NOT prepend a `# title`
+        // heading here or the document would carry a duplicate H1 in its body.
         const createdDocId = await client.request<string>("/api/filetree/createDocWithMd", {
           notebook: notebookId,
           path,
-          markdown: body,
+          markdown: markdown ?? "",
         });
         await client.flushTransaction();
         return toolResult({
