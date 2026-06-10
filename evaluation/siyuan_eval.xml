@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Evaluation suite for siyuan-agent-mcp.
+
+  These questions follow the mcp-builder evaluation guidelines: each is independent,
+  read-only, complex (needs several tool calls), realistic, and has a single verifiable answer.
+
+  IMPORTANT: The <answer> values below are placeholders. Answers to questions about a
+  knowledge base depend on its actual content and CANNOT be fixed in advance. Before using
+  this suite as a scored eval, run each question against YOUR SiYuan instance with the MCP
+  tools, solve it yourself, and replace each <answer> with the verified result. The questions
+  are written to exercise the full tool surface (list_notebooks, list_docs, search_notes,
+  read_doc, get_doc_outline, get_backlinks, get_child_blocks, get_block_attrs, sql_query).
+-->
+<evaluation>
+  <qa_pair>
+    <question>How many notebooks are currently open (not closed) in this SiYuan workspace?</question>
+    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Across all open notebooks, how many documents (blocks of type 'd') exist in total?</question>
+    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Using full-text search for the keyword "template", how many heading blocks (type 'h') mention it? Report the integer count of matched heading blocks.</question>
+    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Find the document whose human-readable path is most deeply nested (the most '/' separators in its hpath). What is that document's title?</question>
+    <answer>REPLACE_WITH_VERIFIED_TITLE</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>In the document titled "Please Start Here" from the SiYuan User Guide, how many top-level headings appear in its outline?</question>
+    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Identify the document that has the largest number of backlinks pointing to it. How many backlinks does it have?</question>
+    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Using SQL, find the most recently updated document (type 'd') across all notebooks. What is its title (content field)?</question>
+    <answer>REPLACE_WITH_VERIFIED_TITLE</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>How many blocks in total carry at least one custom attribute (an attribute whose name starts with 'custom-')? Use SQL against the attributes table.</question>
+    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Read the full content of the SiYuan User Guide's first document. How many fenced code blocks (lines beginning with ```) does its Markdown contain?</question>
+    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+  </qa_pair>
+  <qa_pair>
+    <question>Among all documents, which notebook contains the highest number of documents? Report the notebook's name.</question>
+    <answer>REPLACE_WITH_VERIFIED_NAME</answer>
+  </qa_pair>
+</evaluation>
