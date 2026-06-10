@@ -6,10 +6,14 @@ import {
   escapeSqlString,
   escapeLikePattern,
   truncate,
+  truncateWithInfo,
+  truncationInfo,
   pickBlockFields,
+  operationIdsFromTransactions,
   toolResult,
   toolError,
   requireConfirmId,
+  requireConfirmText,
 } from "../dist/format.js";
 import { sanitizeUrl } from "../dist/config.js";
 
@@ -42,6 +46,19 @@ test("truncate cuts long text and appends a marker", () => {
   const out = truncate("x".repeat(50), 10);
   assert.ok(out.startsWith("x".repeat(10)));
   assert.ok(out.includes("truncated"));
+});
+
+test("truncateWithInfo returns consistent text and metadata", () => {
+  const out = truncateWithInfo("x".repeat(50), 10);
+  assert.equal(out.truncation.truncated, true);
+  assert.equal(out.truncation.originalLength, 50);
+  assert.equal(out.truncation.returnedLength, 10);
+  assert.ok(out.text.includes("truncated 40 of 50"));
+  assert.deepEqual(truncationInfo("abc", 10), {
+    truncated: false,
+    originalLength: 3,
+    returnedLength: 3,
+  });
 });
 
 test("pickBlockFields keeps the expected fields only", () => {
@@ -101,6 +118,14 @@ test("toolError flags isError", () => {
   assert.equal(r.content[0].text, "boom");
 });
 
+test("operationIdsFromTransactions extracts unique IDs in order", () => {
+  const ids = operationIdsFromTransactions([
+    { doOperations: [{ id: "20210817205410-2kvfpfn" }, { id: "20231224160424-2f5680o" }] },
+    { doOperations: [{ id: "20210817205410-2kvfpfn" }, { data: "ignored" }] },
+  ]);
+  assert.deepEqual(ids, ["20210817205410-2kvfpfn", "20231224160424-2f5680o"]);
+});
+
 test("requireConfirmId rejects missing or mismatched confirmations", () => {
   assert.doesNotThrow(() =>
     requireConfirmId("20210817205410-2kvfpfn", "20210817205410-2kvfpfn")
@@ -110,6 +135,12 @@ test("requireConfirmId rejects missing or mismatched confirmations", () => {
     () => requireConfirmId("20210817205410-2kvfpfn", "20231224160424-2f5680o"),
     /confirmId/
   );
+});
+
+test("requireConfirmText rejects missing or mismatched confirmations", () => {
+  assert.doesNotThrow(() => requireConfirmText("remove notebook abc", "remove notebook abc"));
+  assert.throws(() => requireConfirmText("remove notebook abc"), /confirmText/);
+  assert.throws(() => requireConfirmText("remove notebook abc", "remove notebook def"), /confirmText/);
 });
 
 test("sanitizeUrl masks embedded credentials", () => {

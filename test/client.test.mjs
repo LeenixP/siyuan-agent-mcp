@@ -7,9 +7,12 @@ const config = {
   apiUrl: "http://127.0.0.1:6806",
   apiToken: "test-token",
   timeoutMs: 30000,
+  maxConcurrency: 4,
+  retryIndexingMs: 0,
   readOnly: false,
   enableLegacyAliases: false,
   enableSql: true,
+  enableDangerousTools: false,
 };
 
 function mockFetch(impl) {
@@ -58,6 +61,28 @@ test("request throws an actionable error on non-zero code", async () => {
   try {
     const client = new SiYuanClient(config);
     await assert.rejects(() => client.request("/api/block/getBlockInfo"), /code=-1.*bad id/);
+  } finally {
+    restore();
+  }
+});
+
+test("request retries once when SiYuan reports indexing in progress", async () => {
+  let calls = 0;
+  const restore = mockFetch(async () => {
+    calls += 1;
+    return {
+      json: async () =>
+        calls === 1
+          ? { code: 3, msg: "indexing", data: null }
+          : { code: 0, msg: "", data: { ok: true } },
+      status: 200,
+    };
+  });
+  try {
+    const client = new SiYuanClient({ ...config, retryIndexingMs: 1 });
+    const data = await client.request("/api/block/getBlockInfo");
+    assert.deepEqual(data, { ok: true });
+    assert.equal(calls, 2);
   } finally {
     restore();
   }

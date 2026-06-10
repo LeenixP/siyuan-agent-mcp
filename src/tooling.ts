@@ -6,6 +6,7 @@ export interface ToolRegistrationOptions {
   readOnlyMode: boolean;
   enableLegacyAliases: boolean;
   enableSql: boolean;
+  enableDangerousTools: boolean;
 }
 
 export interface SiyuanToolSpec<
@@ -19,6 +20,7 @@ export interface SiyuanToolSpec<
   inputSchema: InputSchema;
   outputSchema: OutputSchema;
   annotations: ToolAnnotations;
+  requiresDangerousTools?: boolean;
 }
 
 export function registerSiyuanTool<
@@ -31,6 +33,9 @@ export function registerSiyuanTool<
   handler: ToolCallback<InputSchema>
 ): void {
   if (options.readOnlyMode && spec.annotations.readOnlyHint !== true) {
+    return;
+  }
+  if (spec.requiresDangerousTools && !options.enableDangerousTools) {
     return;
   }
 

@@ -4,9 +4,12 @@ export interface Config {
   apiUrl: string;
   apiToken: string;
   timeoutMs: number;
+  maxConcurrency: number;
+  retryIndexingMs: number;
   readOnly: boolean;
   enableLegacyAliases: boolean;
   enableSql: boolean;
+  enableDangerousTools: boolean;
 }
 
 function parseBooleanEnv(name: string, defaultValue: boolean): boolean {
@@ -22,6 +25,19 @@ function parsePositiveIntEnv(name: string, defaultValue: number): number {
   if (!Number.isFinite(parsed) || parsed <= 0) {
     console.error(
       `[siyuan-agent-mcp] WARNING: ${name} must be a positive integer; using ${defaultValue}.`
+    );
+    return defaultValue;
+  }
+  return parsed;
+}
+
+function parseNonNegativeIntEnv(name: string, defaultValue: number): number {
+  const value = process.env[name];
+  if (!value) return defaultValue;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    console.error(
+      `[siyuan-agent-mcp] WARNING: ${name} must be a non-negative integer; using ${defaultValue}.`
     );
     return defaultValue;
   }
@@ -68,9 +84,12 @@ export function loadConfig(): Config {
   const apiUrl = normalizeApiUrl(process.env.SIYUAN_API_URL || "http://127.0.0.1:6806");
   const apiToken = process.env.SIYUAN_API_TOKEN || "";
   const timeoutMs = parsePositiveIntEnv("SIYUAN_TIMEOUT_MS", 30_000);
+  const maxConcurrency = parsePositiveIntEnv("SIYUAN_MAX_CONCURRENCY", 4);
+  const retryIndexingMs = parseNonNegativeIntEnv("SIYUAN_RETRY_INDEXING_MS", 1_500);
   const readOnly = parseBooleanEnv("SIYUAN_READ_ONLY", false);
   const enableLegacyAliases = parseBooleanEnv("SIYUAN_ENABLE_LEGACY_ALIASES", false);
   const enableSql = parseBooleanEnv("SIYUAN_ENABLE_SQL", true);
+  const enableDangerousTools = parseBooleanEnv("SIYUAN_ENABLE_DANGEROUS_TOOLS", false);
 
   if (!apiToken) {
     console.error(
@@ -81,5 +100,15 @@ export function loadConfig(): Config {
   }
 
   validateApiUrl(apiUrl);
-  return { apiUrl, apiToken, timeoutMs, readOnly, enableLegacyAliases, enableSql };
+  return {
+    apiUrl,
+    apiToken,
+    timeoutMs,
+    maxConcurrency,
+    retryIndexingMs,
+    readOnly,
+    enableLegacyAliases,
+    enableSql,
+    enableDangerousTools,
+  };
 }

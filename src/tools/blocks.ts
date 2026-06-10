@@ -3,7 +3,13 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
-import { requireConfirmId, toolError, toolResult } from "../format.js";
+import {
+  firstOperationIdFromTransactions,
+  operationIdsFromTransactions,
+  requireConfirmId,
+  toolError,
+  toolResult,
+} from "../format.js";
 import { idSchema, markdownSchema } from "../schemas.js";
 import {
   WRITE_DESTRUCTIVE,
@@ -12,11 +18,6 @@ import {
   type ToolRegistrationOptions,
   registerSiyuanTool,
 } from "../tooling.js";
-
-function extractNewId(data: Array<{ doOperations?: Array<{ id?: string }> }>): string {
-  const ops = data?.[0]?.doOperations;
-  return ops?.find((op) => op.id)?.id ?? "unknown";
-}
 
 function countDefined(values: Array<string | undefined>): number {
   return values.filter((value) => value !== undefined && value !== "").length;
@@ -46,7 +47,9 @@ export function registerBlockTools(
       description:
         "Insert a Markdown block at a precise position. Provide exactly one of previousID, nextID, or parentID.",
       inputSchema: InsertBlockInputSchema,
-      outputSchema: z.object({ insertedBlockId: z.string() }).strict(),
+      outputSchema: z
+        .object({ insertedBlockId: z.string(), operationIds: z.array(z.string()) })
+        .strict(),
       annotations: WRITE_SAFE,
     },
     async ({ markdown, previousID, nextID, parentID }) => {
@@ -54,20 +57,89 @@ export function registerBlockTools(
         if (countDefined([previousID, nextID, parentID]) !== 1) {
           throw new Error("Provide exactly one of previousID, nextID, or parentID.");
         }
-        const data = await client.request<Array<{ doOperations?: Array<{ id?: string }> }>>(
-          "/api/block/insertBlock",
-          {
-            dataType: "markdown",
-            data: markdown,
-            previousID: previousID ?? "",
-            nextID: nextID ?? "",
-            parentID: parentID ?? "",
-          }
-        );
+        const data = await client.request<unknown>("/api/block/insertBlock", {
+          dataType: "markdown",
+          data: markdown,
+          previousID: previousID ?? "",
+          nextID: nextID ?? "",
+          parentID: parentID ?? "",
+        });
+        const insertedBlockId = firstOperationIdFromTransactions(data);
+        if (!insertedBlockId) {
+          throw new Error("SiYuan did not return an inserted block ID.");
+        }
         await client.flushTransaction();
-        return toolResult({ insertedBlockId: extractNewId(data) });
+        return toolResult({
+          insertedBlockId,
+          operationIds: operationIdsFromTransactions(data),
+        });
       } catch (err) {
         return toolError(`siyuan_insert_block failed: ${String(err)}`);
+      }
+    }
+  );
+
+  const BatchInsertBlockInputSchema = z
+    .object({
+      blocks: z
+        .array(
+          z
+            .object({
+              markdown: markdownSchema,
+              previousID: idSchema.optional().describe("Insert immediately after this block."),
+              nextID: idSchema.optional().describe("Insert immediately before this block."),
+              parentID: idSchema.optional().describe("Insert as first child of this block."),
+            })
+            .strict()
+        )
+        .min(1)
+        .max(50),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_batch_insert_blocks",
+      title: "Batch insert SiYuan blocks",
+      description:
+        "Insert up to 50 Markdown blocks in one SiYuan transaction batch. Each item must provide exactly one of previousID, nextID, or parentID.",
+      inputSchema: BatchInsertBlockInputSchema,
+      outputSchema: z
+        .object({
+          count: z.number(),
+          insertedBlockIds: z.array(z.string()),
+          operationIds: z.array(z.string()),
+        })
+        .strict(),
+      annotations: WRITE_SAFE,
+    },
+    async ({ blocks }) => {
+      try {
+        for (const block of blocks) {
+          if (countDefined([block.previousID, block.nextID, block.parentID]) !== 1) {
+            throw new Error("Each block must provide exactly one of previousID, nextID, or parentID.");
+          }
+        }
+        const data = await client.request<unknown>("/api/block/batchInsertBlock", {
+          blocks: blocks.map((block) => ({
+            dataType: "markdown",
+            data: block.markdown,
+            previousID: block.previousID ?? "",
+            nextID: block.nextID ?? "",
+            parentID: block.parentID ?? "",
+          })),
+        });
+        const operationIds = operationIdsFromTransactions(data);
+        await client.flushTransaction();
+        return toolResult({
+          count: blocks.length,
+          insertedBlockIds: operationIds,
+          operationIds,
+        });
+      } catch (err) {
+        return toolError(`siyuan_batch_insert_blocks failed: ${String(err)}`);
       }
     }
   );
@@ -81,19 +153,76 @@ export function registerBlockTools(
       title: "Append SiYuan block",
       description: "Append a Markdown block as the last child of a parent block/document.",
       inputSchema: z.object({ parentID: idSchema, markdown: markdownSchema }).strict(),
-      outputSchema: z.object({ insertedBlockId: z.string() }).strict(),
+      outputSchema: z
+        .object({ insertedBlockId: z.string(), operationIds: z.array(z.string()) })
+        .strict(),
       annotations: WRITE_SAFE,
     },
     async ({ parentID, markdown }) => {
       try {
-        const data = await client.request<Array<{ doOperations?: Array<{ id?: string }> }>>(
-          "/api/block/appendBlock",
-          { dataType: "markdown", data: markdown, parentID }
-        );
+        const data = await client.request<unknown>("/api/block/appendBlock", {
+          dataType: "markdown",
+          data: markdown,
+          parentID,
+        });
+        const insertedBlockId = firstOperationIdFromTransactions(data);
+        if (!insertedBlockId) {
+          throw new Error("SiYuan did not return an inserted block ID.");
+        }
         await client.flushTransaction();
-        return toolResult({ insertedBlockId: extractNewId(data) });
+        return toolResult({
+          insertedBlockId,
+          operationIds: operationIdsFromTransactions(data),
+        });
       } catch (err) {
         return toolError(`siyuan_append_block failed: ${String(err)}`);
+      }
+    }
+  );
+
+  const BatchUpdateBlockInputSchema = z
+    .object({
+      blocks: z
+        .array(z.object({ blockId: idSchema, markdown: markdownSchema }).strict())
+        .min(1)
+        .max(50),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_batch_update_blocks",
+      title: "Batch update SiYuan blocks",
+      description: "Replace up to 50 blocks with Markdown in one SiYuan transaction batch.",
+      inputSchema: BatchUpdateBlockInputSchema,
+      outputSchema: z
+        .object({
+          count: z.number(),
+          updated: z.array(z.string()),
+          operationIds: z.array(z.string()),
+        })
+        .strict(),
+      annotations: WRITE_IDEMPOTENT,
+    },
+    async ({ blocks }) => {
+      try {
+        const data = await client.request<unknown>("/api/block/batchUpdateBlock", {
+          blocks: blocks.map((block) => ({
+            id: block.blockId,
+            dataType: "markdown",
+            data: block.markdown,
+          })),
+        });
+        await client.flushTransaction();
+        return toolResult({
+          count: blocks.length,
+          updated: blocks.map((block) => block.blockId),
+          operationIds: operationIdsFromTransactions(data),
+        });
+      } catch (err) {
+        return toolError(`siyuan_batch_update_blocks failed: ${String(err)}`);
       }
     }
   );
@@ -107,17 +236,27 @@ export function registerBlockTools(
       title: "Prepend SiYuan block",
       description: "Prepend a Markdown block as the first child of a parent block/document.",
       inputSchema: z.object({ parentID: idSchema, markdown: markdownSchema }).strict(),
-      outputSchema: z.object({ insertedBlockId: z.string() }).strict(),
+      outputSchema: z
+        .object({ insertedBlockId: z.string(), operationIds: z.array(z.string()) })
+        .strict(),
       annotations: WRITE_SAFE,
     },
     async ({ parentID, markdown }) => {
       try {
-        const data = await client.request<Array<{ doOperations?: Array<{ id?: string }> }>>(
-          "/api/block/prependBlock",
-          { dataType: "markdown", data: markdown, parentID }
-        );
+        const data = await client.request<unknown>("/api/block/prependBlock", {
+          dataType: "markdown",
+          data: markdown,
+          parentID,
+        });
+        const insertedBlockId = firstOperationIdFromTransactions(data);
+        if (!insertedBlockId) {
+          throw new Error("SiYuan did not return an inserted block ID.");
+        }
         await client.flushTransaction();
-        return toolResult({ insertedBlockId: extractNewId(data) });
+        return toolResult({
+          insertedBlockId,
+          operationIds: operationIdsFromTransactions(data),
+        });
       } catch (err) {
         return toolError(`siyuan_prepend_block failed: ${String(err)}`);
       }
@@ -133,18 +272,18 @@ export function registerBlockTools(
       title: "Update SiYuan block",
       description: "Replace a block's content with new Markdown.",
       inputSchema: z.object({ blockId: idSchema, markdown: markdownSchema }).strict(),
-      outputSchema: z.object({ updated: z.string() }).strict(),
+      outputSchema: z.object({ updated: z.string(), operationIds: z.array(z.string()) }).strict(),
       annotations: WRITE_IDEMPOTENT,
     },
     async ({ blockId, markdown }) => {
       try {
-        await client.request("/api/block/updateBlock", {
+        const data = await client.request<unknown>("/api/block/updateBlock", {
           dataType: "markdown",
           data: markdown,
           id: blockId,
         });
         await client.flushTransaction();
-        return toolResult({ updated: blockId });
+        return toolResult({ updated: blockId, operationIds: operationIdsFromTransactions(data) });
       } catch (err) {
         return toolError(`siyuan_update_block failed: ${String(err)}`);
       }
@@ -161,15 +300,15 @@ export function registerBlockTools(
       description:
         "Delete a block and its children. Requires confirmId equal to blockId. Use siyuan_remove_doc for whole documents.",
       inputSchema: z.object({ blockId: idSchema, confirmId: idSchema }).strict(),
-      outputSchema: z.object({ deleted: z.string() }).strict(),
+      outputSchema: z.object({ deleted: z.string(), operationIds: z.array(z.string()) }).strict(),
       annotations: WRITE_DESTRUCTIVE,
     },
     async ({ blockId, confirmId }) => {
       try {
         requireConfirmId(blockId, confirmId);
-        await client.request("/api/block/deleteBlock", { id: blockId });
+        const data = await client.request<unknown>("/api/block/deleteBlock", { id: blockId });
         await client.flushTransaction();
-        return toolResult({ deleted: blockId });
+        return toolResult({ deleted: blockId, operationIds: operationIdsFromTransactions(data) });
       } catch (err) {
         return toolError(`siyuan_delete_block failed: ${String(err)}`);
       }
@@ -194,7 +333,7 @@ export function registerBlockTools(
       description:
         "Move a block. Provide previousID to move after a block or parentID to move under a parent.",
       inputSchema: MoveBlockInputSchema,
-      outputSchema: z.object({ moved: z.string() }).strict(),
+      outputSchema: z.object({ moved: z.string(), operationIds: z.array(z.string()) }).strict(),
       annotations: WRITE_IDEMPOTENT,
     },
     async ({ blockId, previousID, parentID }) => {
@@ -202,13 +341,13 @@ export function registerBlockTools(
         if (!previousID && !parentID) {
           throw new Error("Provide previousID and/or parentID to anchor the move.");
         }
-        await client.request("/api/block/moveBlock", {
+        const data = await client.request<unknown>("/api/block/moveBlock", {
           id: blockId,
           previousID: previousID ?? "",
           parentID: parentID ?? "",
         });
         await client.flushTransaction();
-        return toolResult({ moved: blockId });
+        return toolResult({ moved: blockId, operationIds: operationIdsFromTransactions(data) });
       } catch (err) {
         return toolError(`siyuan_move_block failed: ${String(err)}`);
       }

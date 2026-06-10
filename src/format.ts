@@ -21,21 +21,41 @@ export function escapeLikePattern(value: string): string {
   return value.replace(/%/g, "\\%").replace(/_/g, "\\_");
 }
 
-/** Truncate over-long text and append a marker so the agent knows content was cut. */
-export function truncate(text: string, max = MAX_CONTENT_LENGTH): string {
-  if (text.length <= max) return text;
-  return (
-    text.slice(0, max) +
-    `\n\n...[truncated ${text.length - max} of ${text.length} characters; use a narrower read/search query to retrieve the rest]`
-  );
+export interface TruncationInfo {
+  truncated: boolean;
+  originalLength: number;
+  returnedLength: number;
 }
 
-export function truncationInfo(text: string, max = MAX_CONTENT_LENGTH) {
+export interface TruncatedText {
+  text: string;
+  truncation: TruncationInfo;
+}
+
+/** Truncate over-long text and append a marker so the agent knows content was cut. */
+export function truncateWithInfo(text: string, max = MAX_CONTENT_LENGTH): TruncatedText {
+  const truncated = text.length > max;
+  const returnedLength = truncated ? max : text.length;
+  const output = truncated
+    ? text.slice(0, max) +
+      `\n\n...[truncated ${text.length - max} of ${text.length} characters; use a narrower read/search query to retrieve the rest]`
+    : text;
   return {
-    truncated: text.length > max,
-    originalLength: text.length,
-    returnedLength: Math.min(text.length, max),
+    text: output,
+    truncation: {
+      truncated,
+      originalLength: text.length,
+      returnedLength,
+    },
   };
+}
+
+export function truncate(text: string, max = MAX_CONTENT_LENGTH): string {
+  return truncateWithInfo(text, max).text;
+}
+
+export function truncationInfo(text: string, max = MAX_CONTENT_LENGTH): TruncationInfo {
+  return truncateWithInfo(text, max).truncation;
 }
 
 /** Keep only the fields agents care about, dropping internal hashes and paths. */
@@ -52,6 +72,33 @@ export function pickBlockFields(b: SiYuanBlock) {
     created: b.created,
     updated: b.updated,
   };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+/** Extract block IDs from SiYuan transaction arrays returned by write APIs. */
+export function operationIdsFromTransactions(data: unknown): string[] {
+  if (!Array.isArray(data)) return [];
+  const ids: string[] = [];
+  for (const transaction of data) {
+    const tx = asRecord(transaction);
+    const operations = tx?.doOperations;
+    if (!Array.isArray(operations)) continue;
+    for (const operation of operations) {
+      const op = asRecord(operation);
+      if (typeof op?.id === "string" && op.id) {
+        ids.push(op.id);
+      }
+    }
+  }
+  return Array.from(new Set(ids));
+}
+
+export function firstOperationIdFromTransactions(data: unknown): string | null {
+  return operationIdsFromTransactions(data)[0] ?? null;
 }
 
 /**
@@ -93,5 +140,11 @@ export function requireConfirmId(targetId: string, confirmId?: string): void {
     throw new Error(
       `Destructive operation requires confirmId equal to the target ID (${targetId}).`
     );
+  }
+}
+
+export function requireConfirmText(expected: string, confirmText?: string): void {
+  if (confirmText !== expected) {
+    throw new Error(`Dangerous operation requires confirmText exactly equal to "${expected}".`);
   }
 }

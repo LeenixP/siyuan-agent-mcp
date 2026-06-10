@@ -112,4 +112,52 @@ export function registerAttrTools(
       }
     }
   );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_batch_set_block_attrs",
+      title: "Batch set SiYuan block attributes",
+      description:
+        "Set or remove attributes for up to 100 blocks. Values must be strings; null removes the attribute. Custom keys must start with custom-.",
+      inputSchema: z
+        .object({
+          blockAttrs: z
+            .array(
+              z
+                .object({
+                  blockId: idSchema,
+                  attrs: z.record(ATTR_VALUE_SCHEMA),
+                })
+                .strict()
+            )
+            .min(1)
+            .max(100),
+        })
+        .strict(),
+      outputSchema: z.object({ count: z.number(), blockIds: z.array(z.string()) }).strict(),
+      annotations: WRITE_IDEMPOTENT,
+    },
+    async ({ blockAttrs }) => {
+      try {
+        for (const item of blockAttrs) {
+          validateAttrKeys(item.attrs);
+        }
+        await client.request("/api/attr/batchSetBlockAttrs", {
+          blockAttrs: blockAttrs.map((item) => ({
+            id: item.blockId,
+            attrs: item.attrs,
+          })),
+        });
+        await client.flushTransaction();
+        return toolResult({
+          count: blockAttrs.length,
+          blockIds: blockAttrs.map((item) => item.blockId),
+        });
+      } catch (err) {
+        return toolError(`siyuan_batch_set_block_attrs failed: ${String(err)}`);
+      }
+    }
+  );
 }

@@ -24,13 +24,14 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "siyuan-agent-mcp",
-    version: "3.0.0",
+    version: "3.1.0",
   });
 
   const registrationOptions: ToolRegistrationOptions = {
     readOnlyMode: config.readOnly,
     enableLegacyAliases: config.enableLegacyAliases,
     enableSql: config.enableSql,
+    enableDangerousTools: config.enableDangerousTools,
   };
 
   registerSystemTools(server, client, config, registrationOptions);
@@ -49,7 +50,8 @@ async function main(): Promise<void> {
 
   console.error(
     `[siyuan-agent-mcp] Connected. API: ${sanitizeUrl(config.apiUrl)} ` +
-      `readOnly=${config.readOnly} legacyAliases=${config.enableLegacyAliases} sql=${config.enableSql}`
+      `readOnly=${config.readOnly} legacyAliases=${config.enableLegacyAliases} ` +
+      `sql=${config.enableSql} dangerous=${config.enableDangerousTools}`
   );
 }
 

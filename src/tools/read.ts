@@ -5,11 +5,9 @@ import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
 import type { ChildBlock, OutlineItem } from "../types.js";
 import {
-  summaryList,
   toolError,
   toolResult,
-  truncate,
-  truncationInfo,
+  truncateWithInfo,
 } from "../format.js";
 import {
   ChildBlockSchema,
@@ -69,19 +67,26 @@ export function registerReadTools(
           { id: docId }
         );
         const content = data.content ?? "";
+        const truncated = truncateWithInfo(content);
         const structured = {
           docId,
           hPath: data.hPath ?? "",
-          content: truncate(content),
-          truncation: truncationInfo(content),
+          content: truncated.text,
+          truncation: truncated.truncation,
         };
         return toolResult(
           structured,
-          summaryList("SiYuan document", [
+          [
+            "# SiYuan document",
+            "",
             `- ID: ${docId}`,
             `- Path: ${structured.hPath}`,
             `- Characters: ${structured.truncation.returnedLength}/${structured.truncation.originalLength}`,
-          ])
+            "",
+            "## Markdown",
+            "",
+            structured.content,
+          ].join("\n")
         );
       } catch (err) {
         return toolError(`siyuan_read_doc failed: ${String(err)}`);
@@ -134,12 +139,13 @@ export function registerReadTools(
 
         const kramdown =
           kramdownResult.status === "fulfilled" ? kramdownResult.value.kramdown ?? "" : "";
+        const truncated = truncateWithInfo(kramdown);
         const attrs = attrsResult.status === "fulfilled" ? attrsResult.value ?? {} : {};
         const info = infoResult.status === "fulfilled" ? infoResult.value ?? null : null;
         return toolResult({
           id: blockId,
-          kramdown: truncate(kramdown),
-          truncation: truncationInfo(kramdown),
+          kramdown: truncated.text,
+          truncation: truncated.truncation,
           attrs,
           info,
           warnings,
@@ -200,10 +206,11 @@ export function registerReadTools(
         ]);
         const blocks = blockIds.map((id) => {
           const kramdown = kramdowns[id] ?? "";
+          const truncated = truncateWithInfo(kramdown);
           return {
             id,
-            kramdown: truncate(kramdown),
-            truncated: kramdown.length > truncate(kramdown).length,
+            kramdown: truncated.text,
+            truncated: truncated.truncation.truncated,
             ...(includeAttrs ? { attrs: attrs[id] ?? {} } : {}),
           };
         });
@@ -237,6 +244,118 @@ export function registerReadTools(
         return toolResult({ docId, outline: outline ?? [] });
       } catch (err) {
         return toolError(`siyuan_get_doc_outline failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_tail_child_blocks",
+      title: "Get SiYuan tail child blocks",
+      description: "List the last N direct child blocks of a block/document.",
+      inputSchema: z
+        .object({
+          blockId: idSchema,
+          count: z.number().int().min(1).max(100).default(7),
+        })
+        .strict(),
+      outputSchema: z
+        .object({
+          blockId: z.string(),
+          count: z.number(),
+          children: z.array(ChildBlockSchema),
+        })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockId, count }) => {
+      try {
+        const children = await client.request<ChildBlock[]>("/api/block/getTailChildBlocks", {
+          id: blockId,
+          n: count,
+        });
+        const list = children ?? [];
+        return toolResult({ blockId, count: list.length, children: list });
+      } catch (err) {
+        return toolError(`siyuan_get_tail_child_blocks failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_block_index",
+      title: "Get SiYuan block index",
+      description: "Return a block's sibling index as reported by SiYuan.",
+      inputSchema: z.object({ blockId: idSchema }).strict(),
+      outputSchema: z.object({ blockId: z.string(), index: z.unknown() }).strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockId }) => {
+      try {
+        const index = await client.request<unknown>("/api/block/getBlockIndex", { id: blockId });
+        return toolResult({ blockId, index });
+      } catch (err) {
+        return toolError(`siyuan_get_block_index failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_ref_ids",
+      title: "Get SiYuan reference IDs",
+      description: "Get block reference definitions and original reference block IDs for a block.",
+      inputSchema: z.object({ blockId: idSchema.optional() }).strict(),
+      outputSchema: z
+        .object({
+          blockId: z.string().nullable(),
+          refDefs: z.unknown(),
+          originalRefBlockIDs: z.unknown(),
+        })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockId }) => {
+      try {
+        const data = await client.request<{
+          refDefs?: unknown;
+          originalRefBlockIDs?: unknown;
+        }>("/api/block/getRefIDs", blockId ? { id: blockId } : {});
+        return toolResult({
+          blockId: blockId ?? null,
+          refDefs: data.refDefs ?? [],
+          originalRefBlockIDs: data.originalRefBlockIDs ?? {},
+        });
+      } catch (err) {
+        return toolError(`siyuan_get_ref_ids failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_ref_text",
+      title: "Get SiYuan reference text",
+      description: "Get the display text SiYuan uses for block references to a block.",
+      inputSchema: z.object({ blockId: idSchema }).strict(),
+      outputSchema: z.object({ blockId: z.string(), refText: z.string() }).strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockId }) => {
+      try {
+        const refText = await client.request<string>("/api/block/getRefText", { id: blockId });
+        return toolResult({ blockId, refText: refText ?? "" });
+      } catch (err) {
+        return toolError(`siyuan_get_ref_text failed: ${String(err)}`);
       }
     }
   );

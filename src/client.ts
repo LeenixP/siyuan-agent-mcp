@@ -8,11 +8,17 @@ export class SiYuanClient {
   private readonly apiUrl: string;
   private readonly apiToken: string;
   private readonly timeoutMs: number;
+  private readonly maxConcurrency: number;
+  private readonly retryIndexingMs: number;
+  private activeRequests = 0;
+  private readonly pendingRequests: Array<() => void> = [];
 
   constructor(config: Config) {
     this.apiUrl = config.apiUrl;
     this.apiToken = config.apiToken;
     this.timeoutMs = config.timeoutMs ?? 30_000;
+    this.maxConcurrency = Math.max(1, config.maxConcurrency ?? 4);
+    this.retryIndexingMs = Math.max(0, config.retryIndexingMs ?? 1_500);
   }
 
   /**
@@ -23,6 +29,53 @@ export class SiYuanClient {
     endpoint: string,
     body?: Record<string, unknown>
   ): Promise<T> {
+    return this.withConcurrency(() => this.requestWithRetry<T>(endpoint, body));
+  }
+
+  private async withConcurrency<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.activeRequests >= this.maxConcurrency) {
+      await new Promise<void>((resolve) => {
+        this.pendingRequests.push(resolve);
+      });
+    }
+
+    this.activeRequests += 1;
+    try {
+      return await operation();
+    } finally {
+      this.activeRequests -= 1;
+      const next = this.pendingRequests.shift();
+      if (next) next();
+    }
+  }
+
+  private async requestWithRetry<T = unknown>(
+    endpoint: string,
+    body?: Record<string, unknown>
+  ): Promise<T> {
+    let json = await this.requestOnce<T>(endpoint, body);
+    if (json.code === 3 && this.retryIndexingMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.retryIndexingMs));
+      json = await this.requestOnce<T>(endpoint, body);
+    }
+
+    if (json.code !== 0) {
+      const hint =
+        json.code === 3
+          ? " The SiYuan index may still be building; retry after it finishes or increase SIYUAN_RETRY_INDEXING_MS."
+          : "";
+      throw new Error(
+        `SiYuan API error [${endpoint}]: code=${json.code} msg="${json.msg || "(empty)"}".${hint}`
+      );
+    }
+
+    return json.data;
+  }
+
+  private async requestOnce<T = unknown>(
+    endpoint: string,
+    body?: Record<string, unknown>
+  ): Promise<SiYuanResponse<T>> {
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
     };
@@ -70,13 +123,7 @@ export class SiYuanClient {
       );
     }
 
-    if (json.code !== 0) {
-      throw new Error(
-        `SiYuan API error [${endpoint}]: code=${json.code} msg="${json.msg || "(empty)"}"`
-      );
-    }
-
-    return json.data;
+    return json;
   }
 
   /**

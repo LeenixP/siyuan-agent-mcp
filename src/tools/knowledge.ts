@@ -19,11 +19,11 @@ const ASSET_METHOD_CODE: Record<string, number> = {
 };
 
 const ASSET_ORDER_CODE: Record<string, number> = {
-  relevance: 7,
-  createdAsc: 1,
-  createdDesc: 2,
-  updatedAsc: 3,
-  updatedDesc: 4,
+  relevance: 0,
+  relevanceDesc: 0,
+  relevanceAsc: 1,
+  updatedAsc: 2,
+  updatedDesc: 3,
 };
 
 export function registerKnowledgeTools(
@@ -123,13 +123,116 @@ export function registerKnowledgeTools(
     }
   );
 
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_doc_assets",
+      title: "Get SiYuan document assets",
+      description: "List assets referenced by a document, optionally limited to image assets.",
+      inputSchema: z
+        .object({
+          docId: idSchema,
+          imagesOnly: z.boolean().default(false),
+        })
+        .strict(),
+      outputSchema: z
+        .object({ docId: z.string(), imagesOnly: z.boolean(), count: z.number(), assets: z.unknown() })
+        .strict(),
+      annotations: READ_ONLY_EXTERNAL,
+    },
+    async ({ docId, imagesOnly }) => {
+      try {
+        const assets = await client.request<unknown[]>(
+          imagesOnly ? "/api/asset/getDocImageAssets" : "/api/asset/getDocAssets",
+          { id: docId }
+        );
+        return toolResult({ docId, imagesOnly, count: assets?.length ?? 0, assets: assets ?? [] });
+      } catch (err) {
+        return toolError(`siyuan_get_doc_assets failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_missing_assets",
+      title: "Get missing SiYuan assets",
+      description: "List asset references whose files are missing from the workspace.",
+      inputSchema: EmptyInputSchema,
+      outputSchema: z.object({ count: z.number(), assets: z.unknown() }).strict(),
+      annotations: READ_ONLY_EXTERNAL,
+    },
+    async () => {
+      try {
+        const assets = await client.request<unknown[]>("/api/asset/getMissingAssets");
+        return toolResult({ count: assets?.length ?? 0, assets: assets ?? [] });
+      } catch (err) {
+        return toolError(`siyuan_get_missing_assets failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_unused_assets",
+      title: "Get unused SiYuan assets",
+      description: "List unreferenced workspace assets, bounded client-side after SiYuan's own cap.",
+      inputSchema: z.object({ limit: z.number().int().min(1).max(512).default(100) }).strict(),
+      outputSchema: z
+        .object({ count: z.number(), limit: z.number(), truncated: z.boolean(), assets: z.unknown() })
+        .strict(),
+      annotations: READ_ONLY_EXTERNAL,
+    },
+    async ({ limit }) => {
+      try {
+        const assets = await client.request<unknown[]>("/api/asset/getUnusedAssets");
+        const list = (assets ?? []).slice(0, limit);
+        return toolResult({
+          count: list.length,
+          limit,
+          truncated: (assets?.length ?? 0) > list.length,
+          assets: list,
+        });
+      } catch (err) {
+        return toolError(`siyuan_get_unused_assets failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_resolve_asset_path",
+      title: "Resolve SiYuan asset path",
+      description: "Resolve a workspace-relative asset path such as assets/foo.png to its local path.",
+      inputSchema: z.object({ path: z.string().min(1).max(1000) }).strict(),
+      outputSchema: z.object({ path: z.string(), localPath: z.string() }).strict(),
+      annotations: READ_ONLY_EXTERNAL,
+    },
+    async ({ path }) => {
+      try {
+        const localPath = await client.request<string>("/api/asset/resolveAssetPath", { path });
+        return toolResult({ path, localPath });
+      } catch (err) {
+        return toolError(`siyuan_resolve_asset_path failed: ${String(err)}`);
+      }
+    }
+  );
+
   const SearchAssetContentInputSchema = z
     .object({
       query: z.string().min(1).max(500),
       method: z.enum(["keyword", "querySyntax", "regex"]).default("keyword"),
       orderBy: z
-        .enum(["relevance", "createdAsc", "createdDesc", "updatedAsc", "updatedDesc"])
-        .default("relevance"),
+        .enum(["relevance", "relevanceDesc", "relevanceAsc", "updatedAsc", "updatedDesc"])
+        .default("relevanceDesc")
+        .describe("Sort order. 'relevance' is a deprecated alias for 'relevanceDesc'."),
       page: pageSchema,
       pageSize: pageSizeSchema,
     })
