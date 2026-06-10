@@ -3,7 +3,14 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { SiYuanClient } from "../dist/client.js";
 
-const config = { apiUrl: "http://127.0.0.1:6806", apiToken: "test-token" };
+const config = {
+  apiUrl: "http://127.0.0.1:6806",
+  apiToken: "test-token",
+  timeoutMs: 30000,
+  readOnly: false,
+  enableLegacyAliases: false,
+  enableSql: true,
+};
 
 function mockFetch(impl) {
   const original = globalThis.fetch;
@@ -78,6 +85,21 @@ test("request throws on non-JSON response", async () => {
   try {
     const client = new SiYuanClient(config);
     await assert.rejects(() => client.request("/api/test"), /non-JSON/);
+  } finally {
+    restore();
+  }
+});
+
+test("request throws on non-OK HTTP status before parsing JSON", async () => {
+  const restore = mockFetch(async () => ({
+    ok: false,
+    status: 403,
+    statusText: "Forbidden",
+    json: async () => ({ code: 0, msg: "", data: null }),
+  }));
+  try {
+    const client = new SiYuanClient(config);
+    await assert.rejects(() => client.request("/api/test"), /HTTP error.*403.*Forbidden/);
   } finally {
     restore();
   }

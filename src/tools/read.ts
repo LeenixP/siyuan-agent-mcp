@@ -1,113 +1,233 @@
-// Read tools: full document content, single block detail, outline, backlinks, children.
+// Read tools: documents, blocks, backlinks, navigation context, and statistics.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
 import type { ChildBlock, OutlineItem } from "../types.js";
-import { SIYUAN_ID_PATTERN, toolError, toolResult, truncate } from "../format.js";
+import {
+  summaryList,
+  toolError,
+  toolResult,
+  truncate,
+  truncationInfo,
+} from "../format.js";
+import {
+  ChildBlockSchema,
+  EmptyInputSchema,
+  TruncationSchema,
+  UnknownArraySchema,
+  UnknownRecordSchema,
+  idSchema,
+  limitSchema,
+} from "../schemas.js";
+import {
+  READ_ONLY,
+  type ToolRegistrationOptions,
+  registerSiyuanTool,
+} from "../tooling.js";
 
-const idSchema = z
-  .string()
-  .regex(SIYUAN_ID_PATTERN, "Invalid ID format (expected YYYYMMDDHHmmss-xxxxxxx)");
+function warningFrom(label: string, result: PromiseSettledResult<unknown>): string | null {
+  if (result.status === "fulfilled") return null;
+  return `${label}: ${String(result.reason)}`;
+}
 
-export function registerReadTools(server: McpServer, client: SiYuanClient): void {
-  // -- read_doc: the core "read a whole note" capability ----------------------
-  server.registerTool(
-    "read_doc",
+export function registerReadTools(
+  server: McpServer,
+  client: SiYuanClient,
+  options: ToolRegistrationOptions
+): void {
+  const ReadDocInputSchema = z
+    .object({
+      docId: idSchema.describe("Document/root block ID to read."),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Read full document content",
+      name: "siyuan_read_doc",
+      legacyName: "read_doc",
+      title: "Read SiYuan document",
       description:
-        "Read the complete Markdown content of a document by its ID. " +
-        "This is the main way to read a note end-to-end. Returns the human-readable path and the full GFM Markdown body. " +
-        "Very large documents are truncated to protect context; use get_block or sql_query to read specific parts if needed.",
-      inputSchema: {
-        docId: idSchema.describe("Document (root) block ID to read"),
-      },
-      outputSchema: {
-        docId: z.string(),
-        hPath: z.string(),
-        content: z.string(),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        "Read the complete Markdown content of a document by ID. Large documents are truncated with metadata.",
+      inputSchema: ReadDocInputSchema,
+      outputSchema: z
+        .object({
+          docId: z.string(),
+          hPath: z.string(),
+          content: z.string(),
+          truncation: TruncationSchema,
+        })
+        .strict(),
+      annotations: READ_ONLY,
     },
     async ({ docId }) => {
       try {
-        const data = await client.request<{ hPath: string; content: string }>(
+        const data = await client.request<{ hPath?: string; content?: string }>(
           "/api/export/exportMdContent",
           { id: docId }
         );
-        return toolResult({
+        const content = data.content ?? "";
+        const structured = {
           docId,
           hPath: data.hPath ?? "",
-          content: truncate(data.content ?? ""),
-        });
+          content: truncate(content),
+          truncation: truncationInfo(content),
+        };
+        return toolResult(
+          structured,
+          summaryList("SiYuan document", [
+            `- ID: ${docId}`,
+            `- Path: ${structured.hPath}`,
+            `- Characters: ${structured.truncation.returnedLength}/${structured.truncation.originalLength}`,
+          ])
+        );
       } catch (err) {
-        return toolError(`read_doc failed: ${String(err)}`);
+        return toolError(`siyuan_read_doc failed: ${String(err)}`);
       }
     }
   );
 
-  // -- get_block: single block detail (kramdown + attrs + info) ---------------
-  server.registerTool(
-    "get_block",
+  const GetBlockInputSchema = z
+    .object({
+      blockId: idSchema.describe("Block ID to retrieve."),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Get block detail",
+      name: "siyuan_get_block",
+      legacyName: "get_block",
+      title: "Get SiYuan block detail",
       description:
-        "Get full detail of a single block by ID: its kramdown source, attributes, and metadata " +
-        "(block type and the document it belongs to). Use this to inspect or before updating a specific block.",
-      inputSchema: {
-        blockId: idSchema.describe("ID of the block to retrieve"),
-      },
-      outputSchema: {
-        id: z.string(),
-        kramdown: z.string(),
-        attrs: z.record(z.any()),
-        info: z.record(z.any()).optional(),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        "Get a block's kramdown, attributes, and document metadata. Partial API failures are returned as warnings.",
+      inputSchema: GetBlockInputSchema,
+      outputSchema: z
+        .object({
+          id: z.string(),
+          kramdown: z.string(),
+          truncation: TruncationSchema,
+          attrs: UnknownRecordSchema,
+          info: UnknownRecordSchema.nullable(),
+          warnings: z.array(z.string()),
+        })
+        .strict(),
+      annotations: READ_ONLY,
     },
     async ({ blockId }) => {
       try {
-        const [kramdown, attrs, info] = await Promise.all([
-          client
-            .request<{ kramdown: string }>("/api/block/getBlockKramdown", { id: blockId })
-            .then((d) => d?.kramdown ?? "")
-            .catch(() => ""),
-          client
-            .request<Record<string, unknown>>("/api/attr/getBlockAttrs", { id: blockId })
-            .catch(() => ({})),
-          client
-            .request<Record<string, unknown>>("/api/block/getBlockInfo", { id: blockId })
-            .catch(() => undefined),
+        const results = await Promise.allSettled([
+          client.request<{ kramdown?: string }>("/api/block/getBlockKramdown", { id: blockId }),
+          client.request<Record<string, unknown>>("/api/attr/getBlockAttrs", { id: blockId }),
+          client.request<Record<string, unknown>>("/api/block/getBlockInfo", { id: blockId }),
         ]);
+
+        const [kramdownResult, attrsResult, infoResult] = results;
+        const warnings = [
+          warningFrom("getBlockKramdown", kramdownResult),
+          warningFrom("getBlockAttrs", attrsResult),
+          warningFrom("getBlockInfo", infoResult),
+        ].filter((value): value is string => value !== null);
+
+        const kramdown =
+          kramdownResult.status === "fulfilled" ? kramdownResult.value.kramdown ?? "" : "";
+        const attrs = attrsResult.status === "fulfilled" ? attrsResult.value ?? {} : {};
+        const info = infoResult.status === "fulfilled" ? infoResult.value ?? null : null;
         return toolResult({
           id: blockId,
           kramdown: truncate(kramdown),
-          attrs: attrs as Record<string, unknown>,
-          info: info as Record<string, unknown> | undefined,
+          truncation: truncationInfo(kramdown),
+          attrs,
+          info,
+          warnings,
         });
       } catch (err) {
-        return toolError(`get_block failed: ${String(err)}`);
+        return toolError(`siyuan_get_block failed: ${String(err)}`);
       }
     }
   );
 
-  // -- get_doc_outline: heading hierarchy -------------------------------------
-  server.registerTool(
-    "get_doc_outline",
+  const BatchGetBlocksInputSchema = z
+    .object({
+      blockIds: z.array(idSchema).min(1).max(50),
+      mode: z.enum(["md", "textmark"]).default("md"),
+      includeAttrs: z.boolean().default(false),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Get document outline",
+      name: "siyuan_batch_get_blocks",
+      title: "Batch get SiYuan blocks",
       description:
-        "Get the heading hierarchy (outline) of a document. Use this to understand a document's structure " +
-        "and locate the right section before reading or editing, without loading the whole body.",
-      inputSchema: {
-        docId: idSchema.describe("Document (root) block ID"),
-      },
-      outputSchema: {
-        docId: z.string(),
-        outline: z.array(z.any()),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        "Read kramdown for up to 50 blocks in one call, optionally including attributes.",
+      inputSchema: BatchGetBlocksInputSchema,
+      outputSchema: z
+        .object({
+          count: z.number(),
+          blocks: z.array(
+            z
+              .object({
+                id: z.string(),
+                kramdown: z.string(),
+                truncated: z.boolean(),
+                attrs: UnknownRecordSchema.optional(),
+              })
+              .strict()
+          ),
+        })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockIds, mode, includeAttrs }) => {
+      try {
+        const [kramdowns, attrs] = await Promise.all([
+          client.request<Record<string, string>>("/api/block/getBlockKramdowns", {
+            ids: blockIds,
+            mode,
+          }),
+          includeAttrs
+            ? client.request<Record<string, Record<string, unknown>>>(
+                "/api/attr/batchGetBlockAttrs",
+                { ids: blockIds }
+              )
+            : Promise.resolve({} as Record<string, Record<string, unknown>>),
+        ]);
+        const blocks = blockIds.map((id) => {
+          const kramdown = kramdowns[id] ?? "";
+          return {
+            id,
+            kramdown: truncate(kramdown),
+            truncated: kramdown.length > truncate(kramdown).length,
+            ...(includeAttrs ? { attrs: attrs[id] ?? {} } : {}),
+          };
+        });
+        return toolResult({ count: blocks.length, blocks });
+      } catch (err) {
+        return toolError(`siyuan_batch_get_blocks failed: ${String(err)}`);
+      }
+    }
+  );
+
+  const DocIdInputSchema = z.object({ docId: idSchema }).strict();
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_doc_outline",
+      legacyName: "get_doc_outline",
+      title: "Get SiYuan document outline",
+      description:
+        "Get the heading hierarchy of a document without loading the whole body.",
+      inputSchema: DocIdInputSchema,
+      outputSchema: z.object({ docId: z.string(), outline: UnknownArraySchema }).strict(),
+      annotations: READ_ONLY,
     },
     async ({ docId }) => {
       try {
@@ -116,71 +236,112 @@ export function registerReadTools(server: McpServer, client: SiYuanClient): void
         });
         return toolResult({ docId, outline: outline ?? [] });
       } catch (err) {
-        return toolError(`get_doc_outline failed: ${String(err)}`);
+        return toolError(`siyuan_get_doc_outline failed: ${String(err)}`);
       }
     }
   );
 
-  // -- get_backlinks: SiYuan's signature bidirectional links ------------------
-  server.registerTool(
-    "get_backlinks",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Get backlinks and mentions",
+      name: "siyuan_get_doc_info",
+      title: "Get SiYuan document info",
       description:
-        "Get the backlinks (blocks that reference this block/document) and unlinked mentions for a block. " +
-        "This surfaces SiYuan's bidirectional links — useful for understanding how a note connects to the rest of the knowledge base.",
-      inputSchema: {
-        id: idSchema.describe("Block or document ID to find backlinks for"),
-        keyword: z.string().optional().describe("Optional keyword to filter backlinks"),
-        mentionKeyword: z.string().optional().describe("Optional keyword to filter unlinked mentions"),
-      },
-      outputSchema: {
-        id: z.string(),
-        backlinks: z.array(z.any()),
-        backmentions: z.array(z.any()),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        "Get document metadata such as notebook, path, title, icon, and reference info where available.",
+      inputSchema: z.object({ id: idSchema.describe("Document or block ID.") }).strict(),
+      outputSchema: z.object({ id: z.string(), info: UnknownRecordSchema }).strict(),
+      annotations: READ_ONLY,
     },
-    async ({ id, keyword, mentionKeyword }) => {
+    async ({ id }) => {
+      try {
+        const info = await client.request<Record<string, unknown>>("/api/block/getDocInfo", { id });
+        return toolResult({ id, info: info ?? {} });
+      } catch (err) {
+        return toolError(`siyuan_get_doc_info failed: ${String(err)}`);
+      }
+    }
+  );
+
+  const BacklinksInputSchema = z
+    .object({
+      id: idSchema.describe("Block or document ID to find backlinks for."),
+      keyword: z.string().max(200).default(""),
+      mentionKeyword: z.string().max(200).default(""),
+      containChildren: z.boolean().optional(),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_backlinks",
+      legacyName: "get_backlinks",
+      title: "Get SiYuan backlinks and mentions",
+      description:
+        "Get backlinks and unlinked mentions for a block/document, including counts returned by SiYuan.",
+      inputSchema: BacklinksInputSchema,
+      outputSchema: z
+        .object({
+          id: z.string(),
+          box: z.string().optional(),
+          linkRefsCount: z.number(),
+          mentionsCount: z.number(),
+          backlinks: UnknownArraySchema,
+          backmentions: UnknownArraySchema,
+        })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ id, keyword, mentionKeyword, containChildren }) => {
       try {
         const data = await client.request<{
+          box?: string;
           backlinks?: unknown[];
           backmentions?: unknown[];
+          linkRefsCount?: number;
+          mentionsCount?: number;
         }>("/api/ref/getBacklink2", {
           id,
-          k: keyword ?? "",
-          mk: mentionKeyword ?? "",
+          k: keyword,
+          mk: mentionKeyword,
           sort: "3",
           mSort: "3",
+          ...(containChildren !== undefined ? { containChildren } : {}),
         });
         return toolResult({
           id,
+          box: data.box,
+          linkRefsCount: data.linkRefsCount ?? 0,
+          mentionsCount: data.mentionsCount ?? 0,
           backlinks: data.backlinks ?? [],
           backmentions: data.backmentions ?? [],
         });
       } catch (err) {
-        return toolError(`get_backlinks failed: ${String(err)}`);
+        return toolError(`siyuan_get_backlinks failed: ${String(err)}`);
       }
     }
   );
 
-  // -- get_child_blocks: direct children of a block ---------------------------
-  server.registerTool(
-    "get_child_blocks",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Get child blocks",
+      name: "siyuan_get_child_blocks",
+      legacyName: "get_child_blocks",
+      title: "Get SiYuan child blocks",
       description:
-        "List the direct child blocks of a block (blocks under a heading also count as its children). " +
-        "Returns each child's ID, type, and subtype — useful for walking a document's block tree.",
-      inputSchema: {
-        blockId: idSchema.describe("Parent block ID"),
-      },
-      outputSchema: {
-        blockId: z.string(),
-        count: z.number(),
-        children: z.array(z.any()),
-      },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        "List direct child blocks of a block. Blocks below a heading count as heading children.",
+      inputSchema: z.object({ blockId: idSchema }).strict(),
+      outputSchema: z
+        .object({
+          blockId: z.string(),
+          count: z.number(),
+          children: z.array(ChildBlockSchema),
+        })
+        .strict(),
+      annotations: READ_ONLY,
     },
     async ({ blockId }) => {
       try {
@@ -190,7 +351,225 @@ export function registerReadTools(server: McpServer, client: SiYuanClient): void
         const list = children ?? [];
         return toolResult({ blockId, count: list.length, children: list });
       } catch (err) {
-        return toolError(`get_child_blocks failed: ${String(err)}`);
+        return toolError(`siyuan_get_child_blocks failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_block_breadcrumb",
+      title: "Get SiYuan block breadcrumb",
+      description: "Build the notebook/document/block breadcrumb for a block ID.",
+      inputSchema: z
+        .object({
+          blockId: idSchema,
+          excludeTypes: z.array(z.string()).default([]),
+        })
+        .strict(),
+      outputSchema: z.object({ blockId: z.string(), breadcrumb: z.unknown() }).strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockId, excludeTypes }) => {
+      try {
+        const breadcrumb = await client.request<unknown>("/api/block/getBlockBreadcrumb", {
+          id: blockId,
+          excludeTypes,
+        });
+        return toolResult({ blockId, breadcrumb });
+      } catch (err) {
+        return toolError(`siyuan_get_block_breadcrumb failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_block_siblings",
+      title: "Get SiYuan block siblings",
+      description: "Return parent, previous, and next block IDs for a block.",
+      inputSchema: z.object({ blockId: idSchema }).strict(),
+      outputSchema: z
+        .object({
+          blockId: z.string(),
+          parent: z.string(),
+          previous: z.string(),
+          next: z.string(),
+        })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockId }) => {
+      try {
+        const data = await client.request<{ parent?: string; previous?: string; next?: string }>(
+          "/api/block/getBlockSiblingID",
+          { id: blockId }
+        );
+        return toolResult({
+          blockId,
+          parent: data.parent ?? "",
+          previous: data.previous ?? "",
+          next: data.next ?? "",
+        });
+      } catch (err) {
+        return toolError(`siyuan_get_block_siblings failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_check_block_exists",
+      title: "Check SiYuan block existence",
+      description: "Check whether a block ID exists in the current workspace/index.",
+      inputSchema: z.object({ blockId: idSchema }).strict(),
+      outputSchema: z.object({ blockId: z.string(), exists: z.boolean() }).strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockId }) => {
+      try {
+        const exists = await client.request<boolean>("/api/block/checkBlockExist", { id: blockId });
+        return toolResult({ blockId, exists: Boolean(exists) });
+      } catch (err) {
+        return toolError(`siyuan_check_block_exists failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_recent_updated_blocks",
+      title: "Get recently updated SiYuan blocks",
+      description: "Return SiYuan's recent updated blocks list, bounded client-side.",
+      inputSchema: z.object({ limit: limitSchema.default(50) }).strict(),
+      outputSchema: z
+        .object({ count: z.number(), limit: z.number(), blocks: UnknownArraySchema })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ limit }) => {
+      try {
+        const blocks = await client.request<unknown[]>("/api/block/getRecentUpdatedBlocks");
+        const list = (blocks ?? []).slice(0, limit);
+        return toolResult({ count: list.length, limit, blocks: list });
+      } catch (err) {
+        return toolError(`siyuan_get_recent_updated_blocks failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_tree_stat",
+      title: "Get SiYuan tree statistics",
+      description: "Get document/tree statistics for a block or document ID.",
+      inputSchema: z.object({ id: idSchema }).strict(),
+      outputSchema: z.object({ id: z.string(), stat: z.unknown() }).strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ id }) => {
+      try {
+        const data = await client.request<{ stat?: unknown }>("/api/block/getTreeStat", { id });
+        return toolResult({ id, stat: data.stat ?? null });
+      } catch (err) {
+        return toolError(`siyuan_get_tree_stat failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_blocks_word_count",
+      title: "Get SiYuan blocks word count",
+      description: "Get aggregate word-count statistics for one or more block IDs.",
+      inputSchema: z.object({ blockIds: z.array(idSchema).min(1).max(100) }).strict(),
+      outputSchema: z.object({ count: z.number(), stat: z.unknown() }).strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ blockIds }) => {
+      try {
+        const data = await client.request<{ stat?: unknown }>("/api/block/getBlocksWordCount", {
+          ids: blockIds,
+        });
+        return toolResult({ count: blockIds.length, stat: data.stat ?? null });
+      } catch (err) {
+        return toolError(`siyuan_get_blocks_word_count failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_get_recent_docs",
+      title: "Get recent SiYuan documents",
+      description: "Get recently opened or updated documents from SiYuan storage.",
+      inputSchema: z
+        .object({
+          sortBy: z.string().max(50).optional(),
+          limit: limitSchema.default(50),
+        })
+        .strict(),
+      outputSchema: z
+        .object({ count: z.number(), limit: z.number(), docs: UnknownArraySchema })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async ({ sortBy, limit }) => {
+      try {
+        const docs = await client.request<unknown[]>("/api/storage/getRecentDocs", {
+          ...(sortBy ? { sortBy } : {}),
+        });
+        const list = (docs ?? []).slice(0, limit);
+        return toolResult({ count: list.length, limit, docs: list });
+      } catch (err) {
+        return toolError(`siyuan_get_recent_docs failed: ${String(err)}`);
+      }
+    }
+  );
+
+  registerSiyuanTool(
+    server,
+    options,
+    {
+      name: "siyuan_read_workspace_overview",
+      title: "Read SiYuan workspace overview",
+      description:
+        "Quick read-only orientation tool combining recent docs and recently updated blocks.",
+      inputSchema: EmptyInputSchema,
+      outputSchema: z
+        .object({
+          recentDocs: UnknownArraySchema,
+          recentUpdatedBlocks: UnknownArraySchema,
+        })
+        .strict(),
+      annotations: READ_ONLY,
+    },
+    async () => {
+      try {
+        const [recentDocs, recentUpdatedBlocks] = await Promise.all([
+          client.request<unknown[]>("/api/storage/getRecentDocs", {}),
+          client.request<unknown[]>("/api/block/getRecentUpdatedBlocks"),
+        ]);
+        return toolResult({
+          recentDocs: (recentDocs ?? []).slice(0, 20),
+          recentUpdatedBlocks: (recentUpdatedBlocks ?? []).slice(0, 20),
+        });
+      } catch (err) {
+        return toolError(`siyuan_read_workspace_overview failed: ${String(err)}`);
       }
     }
   );

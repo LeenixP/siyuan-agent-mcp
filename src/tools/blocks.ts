@@ -1,50 +1,58 @@
-// Block editing tools: insert, prepend, append, update, delete, move blocks.
+// Block editing tools: insert, prepend, append, update, delete, and move blocks.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
-import { SIYUAN_ID_PATTERN, MAX_CONTENT_LENGTH, toolError, toolResult } from "../format.js";
+import { requireConfirmId, toolError, toolResult } from "../format.js";
+import { idSchema, markdownSchema } from "../schemas.js";
+import {
+  WRITE_DESTRUCTIVE,
+  WRITE_IDEMPOTENT,
+  WRITE_SAFE,
+  type ToolRegistrationOptions,
+  registerSiyuanTool,
+} from "../tooling.js";
 
-const idSchema = z
-  .string()
-  .regex(SIYUAN_ID_PATTERN, "Invalid ID format (expected YYYYMMDDHHmmss-xxxxxxx)");
-
-const markdownSchema = z
-  .string()
-  .min(1)
-  .max(MAX_CONTENT_LENGTH)
-  .describe("Raw GFM Markdown content (e.g. '## Heading', '- item', '| a | b |').");
-
-/** Extract the new block ID from an insert/append/prepend transaction response. */
 function extractNewId(data: Array<{ doOperations?: Array<{ id?: string }> }>): string {
   const ops = data?.[0]?.doOperations;
   return ops?.find((op) => op.id)?.id ?? "unknown";
 }
 
-export function registerBlockTools(server: McpServer, client: SiYuanClient): void {
-  server.registerTool(
-    "insert_block",
+function countDefined(values: Array<string | undefined>): number {
+  return values.filter((value) => value !== undefined && value !== "").length;
+}
+
+export function registerBlockTools(
+  server: McpServer,
+  client: SiYuanClient,
+  options: ToolRegistrationOptions
+): void {
+  const InsertBlockInputSchema = z
+    .object({
+      markdown: markdownSchema,
+      previousID: idSchema.optional().describe("Insert immediately after this block."),
+      nextID: idSchema.optional().describe("Insert immediately before this block."),
+      parentID: idSchema.optional().describe("Insert as first child of this block."),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Insert block",
+      name: "siyuan_insert_block",
+      legacyName: "insert_block",
+      title: "Insert SiYuan block",
       description:
-        "Insert a new block at a precise position, written in raw Markdown. " +
-        "Anchor the position with exactly one of nextID / previousID / parentID " +
-        "(priority when several are given: nextID > previousID > parentID). " +
-        "Use previousID to insert after a block, nextID to insert before a block, parentID to insert as the first child. " +
-        "Provide content as real Markdown — headings, lists, tables, code fences, math, etc.",
-      inputSchema: {
-        markdown: markdownSchema,
-        previousID: idSchema.optional().describe("Insert immediately AFTER this block"),
-        nextID: idSchema.optional().describe("Insert immediately BEFORE this block"),
-        parentID: idSchema.optional().describe("Insert as the first child of this block"),
-      },
-      outputSchema: { insertedBlockId: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+        "Insert a Markdown block at a precise position. Provide exactly one of previousID, nextID, or parentID.",
+      inputSchema: InsertBlockInputSchema,
+      outputSchema: z.object({ insertedBlockId: z.string() }).strict(),
+      annotations: WRITE_SAFE,
     },
     async ({ markdown, previousID, nextID, parentID }) => {
       try {
-        if (!previousID && !nextID && !parentID) {
-          throw new Error("Provide at least one of nextID, previousID, or parentID to anchor the insertion.");
+        if (countDefined([previousID, nextID, parentID]) !== 1) {
+          throw new Error("Provide exactly one of previousID, nextID, or parentID.");
         }
         const data = await client.request<Array<{ doOperations?: Array<{ id?: string }> }>>(
           "/api/block/insertBlock",
@@ -59,24 +67,22 @@ export function registerBlockTools(server: McpServer, client: SiYuanClient): voi
         await client.flushTransaction();
         return toolResult({ insertedBlockId: extractNewId(data) });
       } catch (err) {
-        return toolError(`insert_block failed: ${String(err)}`);
+        return toolError(`siyuan_insert_block failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "append_block",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Append block",
-      description:
-        "Append a new Markdown block as the LAST child of a parent block (commonly a document). " +
-        "The simplest way to add content to the end of a note.",
-      inputSchema: {
-        parentID: idSchema.describe("Parent block ID (e.g. a document ID)"),
-        markdown: markdownSchema,
-      },
-      outputSchema: { insertedBlockId: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      name: "siyuan_append_block",
+      legacyName: "append_block",
+      title: "Append SiYuan block",
+      description: "Append a Markdown block as the last child of a parent block/document.",
+      inputSchema: z.object({ parentID: idSchema, markdown: markdownSchema }).strict(),
+      outputSchema: z.object({ insertedBlockId: z.string() }).strict(),
+      annotations: WRITE_SAFE,
     },
     async ({ parentID, markdown }) => {
       try {
@@ -87,23 +93,22 @@ export function registerBlockTools(server: McpServer, client: SiYuanClient): voi
         await client.flushTransaction();
         return toolResult({ insertedBlockId: extractNewId(data) });
       } catch (err) {
-        return toolError(`append_block failed: ${String(err)}`);
+        return toolError(`siyuan_append_block failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "prepend_block",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Prepend block",
-      description:
-        "Prepend a new Markdown block as the FIRST child of a parent block (commonly a document).",
-      inputSchema: {
-        parentID: idSchema.describe("Parent block ID (e.g. a document ID)"),
-        markdown: markdownSchema,
-      },
-      outputSchema: { insertedBlockId: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      name: "siyuan_prepend_block",
+      legacyName: "prepend_block",
+      title: "Prepend SiYuan block",
+      description: "Prepend a Markdown block as the first child of a parent block/document.",
+      inputSchema: z.object({ parentID: idSchema, markdown: markdownSchema }).strict(),
+      outputSchema: z.object({ insertedBlockId: z.string() }).strict(),
+      annotations: WRITE_SAFE,
     },
     async ({ parentID, markdown }) => {
       try {
@@ -114,24 +119,22 @@ export function registerBlockTools(server: McpServer, client: SiYuanClient): voi
         await client.flushTransaction();
         return toolResult({ insertedBlockId: extractNewId(data) });
       } catch (err) {
-        return toolError(`prepend_block failed: ${String(err)}`);
+        return toolError(`siyuan_prepend_block failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "update_block",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Update block",
-      description:
-        "Replace the content of an existing block with new Markdown. " +
-        "Inspect the block first with get_block if you need its current content.",
-      inputSchema: {
-        blockId: idSchema.describe("ID of the block to update"),
-        markdown: markdownSchema,
-      },
-      outputSchema: { updated: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      name: "siyuan_update_block",
+      legacyName: "update_block",
+      title: "Update SiYuan block",
+      description: "Replace a block's content with new Markdown.",
+      inputSchema: z.object({ blockId: idSchema, markdown: markdownSchema }).strict(),
+      outputSchema: z.object({ updated: z.string() }).strict(),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ blockId, markdown }) => {
       try {
@@ -143,49 +146,56 @@ export function registerBlockTools(server: McpServer, client: SiYuanClient): voi
         await client.flushTransaction();
         return toolResult({ updated: blockId });
       } catch (err) {
-        return toolError(`update_block failed: ${String(err)}`);
+        return toolError(`siyuan_update_block failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "delete_block",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Delete block",
+      name: "siyuan_delete_block",
+      legacyName: "delete_block",
+      title: "Delete SiYuan block",
       description:
-        "Delete a block by its ID. WARNING: this also deletes the block's children and cannot be undone. " +
-        "To delete an entire document, use remove_doc instead.",
-      inputSchema: {
-        blockId: idSchema.describe("ID of the block to delete"),
-      },
-      outputSchema: { deleted: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+        "Delete a block and its children. Requires confirmId equal to blockId. Use siyuan_remove_doc for whole documents.",
+      inputSchema: z.object({ blockId: idSchema, confirmId: idSchema }).strict(),
+      outputSchema: z.object({ deleted: z.string() }).strict(),
+      annotations: WRITE_DESTRUCTIVE,
     },
-    async ({ blockId }) => {
+    async ({ blockId, confirmId }) => {
       try {
+        requireConfirmId(blockId, confirmId);
         await client.request("/api/block/deleteBlock", { id: blockId });
         await client.flushTransaction();
         return toolResult({ deleted: blockId });
       } catch (err) {
-        return toolError(`delete_block failed: ${String(err)}`);
+        return toolError(`siyuan_delete_block failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "move_block",
+  const MoveBlockInputSchema = z
+    .object({
+      blockId: idSchema,
+      previousID: idSchema.optional(),
+      parentID: idSchema.optional(),
+    })
+    .strict();
+
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Move block",
+      name: "siyuan_move_block",
+      legacyName: "move_block",
+      title: "Move SiYuan block",
       description:
-        "Move a block to a new position. Anchor with previousID (move after that block) and/or parentID (move under that parent). " +
-        "previousID and parentID cannot both be empty; if both are given, previousID takes priority.",
-      inputSchema: {
-        blockId: idSchema.describe("ID of the block to move"),
-        previousID: idSchema.optional().describe("Move immediately AFTER this block"),
-        parentID: idSchema.optional().describe("Move under this parent block"),
-      },
-      outputSchema: { moved: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        "Move a block. Provide previousID to move after a block or parentID to move under a parent.",
+      inputSchema: MoveBlockInputSchema,
+      outputSchema: z.object({ moved: z.string() }).strict(),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ blockId, previousID, parentID }) => {
       try {
@@ -200,7 +210,7 @@ export function registerBlockTools(server: McpServer, client: SiYuanClient): voi
         await client.flushTransaction();
         return toolResult({ moved: blockId });
       } catch (err) {
-        return toolError(`move_block failed: ${String(err)}`);
+        return toolError(`siyuan_move_block failed: ${String(err)}`);
       }
     }
   );

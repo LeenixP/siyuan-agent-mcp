@@ -9,6 +9,7 @@ import {
   pickBlockFields,
   toolResult,
   toolError,
+  requireConfirmId,
 } from "../dist/format.js";
 import { sanitizeUrl } from "../dist/config.js";
 
@@ -84,10 +85,31 @@ test("toolResult carries both text content and structuredContent", () => {
   assert.deepEqual(JSON.parse(r.content[0].text), { a: 1 });
 });
 
+test("toolResult can include resource links", () => {
+  const r = toolResult(
+    { a: 1 },
+    "summary",
+    [{ type: "resource_link", uri: "siyuan://block/20210817205410-2kvfpfn", name: "block" }]
+  );
+  assert.equal(r.content[0].text, "summary");
+  assert.equal(r.content[1].type, "resource_link");
+});
+
 test("toolError flags isError", () => {
   const r = toolError("boom");
   assert.equal(r.isError, true);
   assert.equal(r.content[0].text, "boom");
+});
+
+test("requireConfirmId rejects missing or mismatched confirmations", () => {
+  assert.doesNotThrow(() =>
+    requireConfirmId("20210817205410-2kvfpfn", "20210817205410-2kvfpfn")
+  );
+  assert.throws(() => requireConfirmId("20210817205410-2kvfpfn"), /confirmId/);
+  assert.throws(
+    () => requireConfirmId("20210817205410-2kvfpfn", "20231224160424-2f5680o"),
+    /confirmId/
+  );
 });
 
 test("sanitizeUrl masks embedded credentials", () => {

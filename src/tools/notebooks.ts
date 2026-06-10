@@ -1,74 +1,81 @@
-// Notebook management tools: create, rename, open, close notebooks.
+// Notebook management tools.
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
 import type { SiYuanNotebook } from "../types.js";
-import { SIYUAN_ID_PATTERN, toolError, toolResult } from "../format.js";
+import { toolError, toolResult } from "../format.js";
+import { notebookIdSchema } from "../schemas.js";
+import {
+  WRITE_IDEMPOTENT,
+  WRITE_SAFE,
+  type ToolRegistrationOptions,
+  registerSiyuanTool,
+} from "../tooling.js";
 
-const idSchema = z
-  .string()
-  .regex(SIYUAN_ID_PATTERN, "Invalid notebook ID format (expected YYYYMMDDHHmmss-xxxxxxx)");
-
-export function registerNotebookTools(server: McpServer, client: SiYuanClient): void {
-  server.registerTool(
-    "create_notebook",
+export function registerNotebookTools(
+  server: McpServer,
+  client: SiYuanClient,
+  options: ToolRegistrationOptions
+): void {
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Create notebook",
-      description: "Create a new notebook with the given name. Returns the new notebook's ID.",
-      inputSchema: {
-        name: z.string().min(1).max(200).describe("Name for the new notebook"),
-      },
-      outputSchema: { notebookId: z.string(), name: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+      name: "siyuan_create_notebook",
+      legacyName: "create_notebook",
+      title: "Create SiYuan notebook",
+      description: "Create a new SiYuan notebook and return its ID.",
+      inputSchema: z.object({ name: z.string().min(1).max(200) }).strict(),
+      outputSchema: z.object({ notebookId: z.string(), name: z.string() }).strict(),
+      annotations: WRITE_SAFE,
     },
     async ({ name }) => {
       try {
-        const data = await client.request<{ notebook: SiYuanNotebook }>(
+        const data = await client.request<{ notebook?: SiYuanNotebook }>(
           "/api/notebook/createNotebook",
           { name }
         );
         return toolResult({ notebookId: data.notebook?.id ?? "unknown", name });
       } catch (err) {
-        return toolError(`create_notebook failed: ${String(err)}`);
+        return toolError(`siyuan_create_notebook failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "rename_notebook",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Rename notebook",
+      name: "siyuan_rename_notebook",
+      legacyName: "rename_notebook",
+      title: "Rename SiYuan notebook",
       description: "Rename an existing notebook.",
-      inputSchema: {
-        notebookId: idSchema.describe("Notebook ID"),
-        name: z.string().min(1).max(200).describe("New name"),
-      },
-      outputSchema: { notebookId: z.string(), name: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: z.object({ notebookId: notebookIdSchema, name: z.string().min(1).max(200) }).strict(),
+      outputSchema: z.object({ notebookId: z.string(), name: z.string() }).strict(),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ notebookId, name }) => {
       try {
         await client.request("/api/notebook/renameNotebook", { notebook: notebookId, name });
         return toolResult({ notebookId, name });
       } catch (err) {
-        return toolError(`rename_notebook failed: ${String(err)}`);
+        return toolError(`siyuan_rename_notebook failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "open_notebook",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Open notebook",
-      description:
-        "Open (mount) a notebook so its documents become indexed and searchable. " +
-        "Documents in closed notebooks are not returned by search or list_docs.",
-      inputSchema: {
-        notebookId: idSchema.describe("Notebook ID to open"),
-      },
-      outputSchema: { opened: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      name: "siyuan_open_notebook",
+      legacyName: "open_notebook",
+      title: "Open SiYuan notebook",
+      description: "Open/mount a notebook so its documents become indexed and searchable.",
+      inputSchema: z.object({ notebookId: notebookIdSchema }).strict(),
+      outputSchema: z.object({ opened: z.string() }).strict(),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ notebookId }) => {
       try {
@@ -76,30 +83,29 @@ export function registerNotebookTools(server: McpServer, client: SiYuanClient): 
         await client.flushTransaction();
         return toolResult({ opened: notebookId });
       } catch (err) {
-        return toolError(`open_notebook failed: ${String(err)}`);
+        return toolError(`siyuan_open_notebook failed: ${String(err)}`);
       }
     }
   );
 
-  server.registerTool(
-    "close_notebook",
+  registerSiyuanTool(
+    server,
+    options,
     {
-      title: "Close notebook",
-      description:
-        "Close (unmount) a notebook. Its documents will no longer appear in search or list_docs until reopened. " +
-        "This does not delete any data.",
-      inputSchema: {
-        notebookId: idSchema.describe("Notebook ID to close"),
-      },
-      outputSchema: { closed: z.string() },
-      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      name: "siyuan_close_notebook",
+      legacyName: "close_notebook",
+      title: "Close SiYuan notebook",
+      description: "Close/unmount a notebook without deleting data.",
+      inputSchema: z.object({ notebookId: notebookIdSchema }).strict(),
+      outputSchema: z.object({ closed: z.string() }).strict(),
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ notebookId }) => {
       try {
         await client.request("/api/notebook/closeNotebook", { notebook: notebookId });
         return toolResult({ closed: notebookId });
       } catch (err) {
-        return toolError(`close_notebook failed: ${String(err)}`);
+        return toolError(`siyuan_close_notebook failed: ${String(err)}`);
       }
     }
   );

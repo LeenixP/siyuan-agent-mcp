@@ -7,10 +7,12 @@ import type { SiYuanResponse } from "./types.js";
 export class SiYuanClient {
   private readonly apiUrl: string;
   private readonly apiToken: string;
+  private readonly timeoutMs: number;
 
   constructor(config: Config) {
     this.apiUrl = config.apiUrl;
     this.apiToken = config.apiToken;
+    this.timeoutMs = config.timeoutMs ?? 30_000;
   }
 
   /**
@@ -29,16 +31,32 @@ export class SiYuanClient {
     }
 
     let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       response = await fetch(`${this.apiUrl}${endpoint}`, {
         method: "POST",
         headers,
         body: body ? JSON.stringify(body) : undefined,
+        signal: controller.signal,
       });
     } catch (err) {
+      const reason =
+        err instanceof Error && err.name === "AbortError"
+          ? `request timed out after ${this.timeoutMs}ms`
+          : String(err);
       throw new Error(
-        `Failed to reach SiYuan at ${sanitizeUrl(this.apiUrl)} [${endpoint}]: ${String(err)}. ` +
+        `Failed to reach SiYuan at ${sanitizeUrl(this.apiUrl)} [${endpoint}]: ${reason}. ` +
           `Is SiYuan running with the kernel API enabled?`
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (response.ok === false) {
+      throw new Error(
+        `SiYuan HTTP error [${endpoint}]: ${response.status} ${response.statusText}. ` +
+          `Check SIYUAN_API_URL, token permissions, and whether the kernel is available.`
       );
     }
 
@@ -54,7 +72,7 @@ export class SiYuanClient {
 
     if (json.code !== 0) {
       throw new Error(
-        `SiYuan API error [${endpoint}]: code=${json.code} msg="${json.msg}"`
+        `SiYuan API error [${endpoint}]: code=${json.code} msg="${json.msg || "(empty)"}"`
       );
     }
 

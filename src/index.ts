@@ -13,6 +13,10 @@ import { registerDocTools } from "./tools/docs.js";
 import { registerBlockTools } from "./tools/blocks.js";
 import { registerAttrTools } from "./tools/attrs.js";
 import { registerNotebookTools } from "./tools/notebooks.js";
+import { registerKnowledgeTools } from "./tools/knowledge.js";
+import { registerSystemTools } from "./tools/system.js";
+import { registerResources } from "./resources.js";
+import type { ToolRegistrationOptions } from "./tooling.js";
 
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -20,21 +24,33 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "siyuan-agent-mcp",
-    version: "2.0.1",
+    version: "3.0.0",
   });
 
-  registerNavigateTools(server, client);
-  registerSearchTools(server, client);
-  registerReadTools(server, client);
-  registerDocTools(server, client);
-  registerBlockTools(server, client);
-  registerAttrTools(server, client);
-  registerNotebookTools(server, client);
+  const registrationOptions: ToolRegistrationOptions = {
+    readOnlyMode: config.readOnly,
+    enableLegacyAliases: config.enableLegacyAliases,
+    enableSql: config.enableSql,
+  };
+
+  registerSystemTools(server, client, config, registrationOptions);
+  registerNavigateTools(server, client, registrationOptions);
+  registerSearchTools(server, client, registrationOptions);
+  registerReadTools(server, client, registrationOptions);
+  registerKnowledgeTools(server, client, registrationOptions);
+  registerDocTools(server, client, registrationOptions);
+  registerBlockTools(server, client, registrationOptions);
+  registerAttrTools(server, client, registrationOptions);
+  registerNotebookTools(server, client, registrationOptions);
+  registerResources(server, client);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error(`[siyuan-agent-mcp] Connected. API: ${sanitizeUrl(config.apiUrl)}`);
+  console.error(
+    `[siyuan-agent-mcp] Connected. API: ${sanitizeUrl(config.apiUrl)} ` +
+      `readOnly=${config.readOnly} legacyAliases=${config.enableLegacyAliases} sql=${config.enableSql}`
+  );
 }
 
 main().catch((err) => {

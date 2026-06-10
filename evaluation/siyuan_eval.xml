@@ -1,56 +1,53 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Evaluation suite for siyuan-agent-mcp.
+  Read-only evaluation suite for siyuan-agent-mcp v3.
 
-  These questions follow the mcp-builder evaluation guidelines: each is independent,
-  read-only, complex (needs several tool calls), realistic, and has a single verifiable answer.
-
-  IMPORTANT: The <answer> values below are placeholders. Answers to questions about a
-  knowledge base depend on its actual content and CANNOT be fixed in advance. Before using
-  this suite as a scored eval, run each question against YOUR SiYuan instance with the MCP
-  tools, solve it yourself, and replace each <answer> with the verified result. The questions
-  are written to exercise the full tool surface (list_notebooks, list_docs, search_notes,
-  read_doc, get_doc_outline, get_backlinks, get_child_blocks, get_block_attrs, sql_query).
+  This suite is intended for a stable SiYuan fixture workspace containing one open
+  notebook named "MCP Evaluation Notebook" with three documents:
+  - "MCP Evaluation Alpha" with tags #mcp# and #planning#, a custom-status=active attr,
+    two H2 headings, one backlink to Beta, and one asset reference named fixture-diagram.png.
+  - "MCP Evaluation Beta" with one backlink to Alpha and one broken block reference fixture.
+  - "MCP Evaluation Archive" with custom-status=archived.
 -->
 <evaluation>
   <qa_pair>
-    <question>How many notebooks are currently open (not closed) in this SiYuan workspace?</question>
-    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+    <question>Using siyuan_list_notebooks, what is the exact name of the fixture notebook whose name starts with "MCP Evaluation"?</question>
+    <answer>MCP Evaluation Notebook</answer>
   </qa_pair>
   <qa_pair>
-    <question>Across all open notebooks, how many documents (blocks of type 'd') exist in total?</question>
-    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+    <question>Using siyuan_search_notes for "MCP Evaluation Alpha", what is the title/content of the matching document block?</question>
+    <answer>MCP Evaluation Alpha</answer>
   </qa_pair>
   <qa_pair>
-    <question>Using full-text search for the keyword "template", how many heading blocks (type 'h') mention it? Report the integer count of matched heading blocks.</question>
-    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+    <question>Using siyuan_get_doc_outline on "MCP Evaluation Alpha", how many H2 headings are in the outline?</question>
+    <answer>2</answer>
   </qa_pair>
   <qa_pair>
-    <question>Find the document whose human-readable path is most deeply nested (the most '/' separators in its hpath). What is that document's title?</question>
-    <answer>REPLACE_WITH_VERIFIED_TITLE</answer>
+    <question>Using siyuan_query_blocks, how many documents in the fixture notebook contain "MCP Evaluation" in their content?</question>
+    <answer>3</answer>
   </qa_pair>
   <qa_pair>
-    <question>In the document titled "Please Start Here" from the SiYuan User Guide, how many top-level headings appear in its outline?</question>
-    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+    <question>Using siyuan_batch_get_block_attrs or siyuan_get_block_attrs, what is the custom-status value on "MCP Evaluation Alpha"?</question>
+    <answer>active</answer>
   </qa_pair>
   <qa_pair>
-    <question>Identify the document that has the largest number of backlinks pointing to it. How many backlinks does it have?</question>
-    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+    <question>Using tag tools, which fixture tag besides mcp is attached to "MCP Evaluation Alpha"?</question>
+    <answer>planning</answer>
   </qa_pair>
   <qa_pair>
-    <question>Using SQL, find the most recently updated document (type 'd') across all notebooks. What is its title (content field)?</question>
-    <answer>REPLACE_WITH_VERIFIED_TITLE</answer>
+    <question>Using siyuan_get_backlinks on "MCP Evaluation Alpha", how many linked references point to it from the fixture?</question>
+    <answer>1</answer>
   </qa_pair>
   <qa_pair>
-    <question>How many blocks in total carry at least one custom attribute (an attribute whose name starts with 'custom-')? Use SQL against the attributes table.</question>
-    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+    <question>Using siyuan_search_assets with query "fixture-diagram", what is the expected asset filename?</question>
+    <answer>fixture-diagram.png</answer>
   </qa_pair>
   <qa_pair>
-    <question>Read the full content of the SiYuan User Guide's first document. How many fenced code blocks (lines beginning with ```) does its Markdown contain?</question>
-    <answer>REPLACE_WITH_VERIFIED_COUNT</answer>
+    <question>Using siyuan_list_invalid_refs, how many invalid block references are intentionally present in the fixture?</question>
+    <answer>1</answer>
   </qa_pair>
   <qa_pair>
-    <question>Among all documents, which notebook contains the highest number of documents? Report the notebook's name.</question>
-    <answer>REPLACE_WITH_VERIFIED_NAME</answer>
+    <question>Using MCP resources, what URI pattern reads a document by ID?</question>
+    <answer>siyuan://doc/{id}</answer>
   </qa_pair>
 </evaluation>
