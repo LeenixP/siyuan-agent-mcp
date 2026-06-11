@@ -9,6 +9,7 @@ import {
   truncateWithInfo,
   truncationInfo,
   normalizeMarkdownInput,
+  splitMarkdownForBlockUpdate,
   pickBlockFields,
   operationIdsFromTransactions,
   toolResult,
@@ -66,6 +67,41 @@ test("normalizeMarkdownInput converts literal escaped newlines only when needed"
   assert.equal(normalizeMarkdownInput("# Title\\n\\nBody"), "# Title\n\nBody");
   assert.equal(normalizeMarkdownInput("# Title\n\\nBody"), "# Title\n\\nBody");
   assert.equal(normalizeMarkdownInput("plain text"), "plain text");
+});
+
+test("splitMarkdownForBlockUpdate separates heading and following body", () => {
+  assert.deepEqual(splitMarkdownForBlockUpdate("## Updated\n\nBody text"), {
+    firstBlock: "## Updated",
+    remainingBlocks: "Body text",
+  });
+});
+
+test("splitMarkdownForBlockUpdate separates multiple paragraph blocks", () => {
+  assert.deepEqual(splitMarkdownForBlockUpdate("First\n\nSecond\n\nThird"), {
+    firstBlock: "First",
+    remainingBlocks: "Second\n\nThird",
+  });
+});
+
+test("splitMarkdownForBlockUpdate keeps one Markdown list as the first block", () => {
+  assert.deepEqual(splitMarkdownForBlockUpdate("- one\n- two\n\nAfter list"), {
+    firstBlock: "- one\n- two",
+    remainingBlocks: "After list",
+  });
+});
+
+test("splitMarkdownForBlockUpdate keeps fenced code intact", () => {
+  assert.deepEqual(splitMarkdownForBlockUpdate("```ts\nconst x = 1;\n```\n\nAfter"), {
+    firstBlock: "```ts\nconst x = 1;\n```",
+    remainingBlocks: "After",
+  });
+});
+
+test("splitMarkdownForBlockUpdate does not split a soft-wrapped paragraph", () => {
+  assert.deepEqual(splitMarkdownForBlockUpdate("First line\nSecond line"), {
+    firstBlock: "First line\nSecond line",
+    remainingBlocks: null,
+  });
 });
 
 test("pickBlockFields keeps the expected fields only", () => {

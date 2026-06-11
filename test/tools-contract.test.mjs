@@ -162,3 +162,143 @@ test("siyuan_batch_insert_blocks reverses same-parent inserts to preserve final 
   assert.deepEqual(client.calls[0].body.blocks.map((block) => block.data), ["second", "first"]);
   assert.equal(result.structuredContent.orderAdjusted, true);
 });
+
+test("siyuan_update_block expands multi-block markdown after the updated block", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const blockId = "20240101010101-abcdef0";
+  const docId = "20240101010100-docroot";
+  const insertedId = "20240101010102-abcdef1";
+  const client = new FakeClient([
+    { rootID: docId },
+    [{ doOperations: [{ id: blockId, action: "update" }] }],
+    [{ doOperations: [{ id: insertedId, action: "insert" }] }],
+  ]);
+  registerBlockTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_update_block.handler({
+    blockId,
+    markdown: "## Updated title\n\nUpdated body",
+  });
+
+  assert.deepEqual(client.calls.slice(0, 3), [
+    {
+      endpoint: "/api/block/getBlockInfo",
+      body: {
+        id: blockId,
+      },
+    },
+    {
+      endpoint: "/api/block/updateBlock",
+      body: {
+        dataType: "markdown",
+        data: "## Updated title",
+        id: blockId,
+      },
+    },
+    {
+      endpoint: "/api/block/insertBlock",
+      body: {
+        dataType: "markdown",
+        data: "Updated body",
+        previousID: blockId,
+        nextID: "",
+        parentID: "",
+      },
+    },
+  ]);
+  assert.deepEqual(client.calls[3], { endpoint: "/api/sqlite/flushTransaction", body: undefined });
+  assert.equal(result.structuredContent.updated, blockId);
+  assert.deepEqual(result.structuredContent.insertedBlockIds, [insertedId]);
+  assert.deepEqual(result.structuredContent.operationIds, [blockId, insertedId]);
+  assert.equal(result.structuredContent.expanded, true);
+});
+
+test("siyuan_update_block leaves document multi-block markdown to SiYuan document update", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const docId = "20240101010101-abcdef0";
+  const client = new FakeClient([
+    { rootID: docId },
+    [{ doOperations: [{ id: docId, action: "update" }] }],
+  ]);
+  registerBlockTools(server, client, options);
+
+  const markdown = "# Document title\n\nBody";
+  const result = await server._registeredTools.siyuan_update_block.handler({
+    blockId: docId,
+    markdown,
+  });
+
+  assert.deepEqual(client.calls, [
+    {
+      endpoint: "/api/block/getBlockInfo",
+      body: {
+        id: docId,
+      },
+    },
+    {
+      endpoint: "/api/block/updateBlock",
+      body: {
+        dataType: "markdown",
+        data: markdown,
+        id: docId,
+      },
+    },
+    { endpoint: "/api/sqlite/flushTransaction", body: undefined },
+  ]);
+  assert.equal(result.structuredContent.updated, docId);
+  assert.deepEqual(result.structuredContent.insertedBlockIds, []);
+  assert.deepEqual(result.structuredContent.operationIds, [docId]);
+  assert.equal(result.structuredContent.expanded, false);
+});
+
+test("siyuan_update_block keeps single-block markdown on updateBlock only", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const blockId = "20240101010101-abcdef0";
+  const client = new FakeClient([[{ doOperations: [{ id: blockId, action: "update" }] }]]);
+  registerBlockTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_update_block.handler({
+    blockId,
+    markdown: "First line\nSecond line",
+  });
+
+  assert.deepEqual(client.calls, [
+    {
+      endpoint: "/api/block/updateBlock",
+      body: {
+        dataType: "markdown",
+        data: "First line\nSecond line",
+        id: blockId,
+      },
+    },
+    { endpoint: "/api/sqlite/flushTransaction", body: undefined },
+  ]);
+  assert.deepEqual(result.structuredContent.insertedBlockIds, []);
+  assert.equal(result.structuredContent.expanded, false);
+});
+
+test("siyuan_batch_update_blocks expands multi-block replacements without batchUpdateBlock data loss", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const blockId = "20240101010101-abcdef0";
+  const docId = "20240101010100-docroot";
+  const insertedId = "20240101010102-abcdef1";
+  const client = new FakeClient([
+    { rootID: docId },
+    [{ doOperations: [{ id: blockId, action: "update" }] }],
+    [{ doOperations: [{ id: insertedId, action: "insert" }] }],
+  ]);
+  registerBlockTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_batch_update_blocks.handler({
+    blocks: [{ blockId, markdown: "First\n\nSecond\n\nThird" }],
+  });
+
+  assert.equal(client.calls[0].endpoint, "/api/block/getBlockInfo");
+  assert.equal(client.calls[1].endpoint, "/api/block/updateBlock");
+  assert.equal(client.calls[1].body.data, "First");
+  assert.equal(client.calls[2].endpoint, "/api/block/insertBlock");
+  assert.equal(client.calls[2].body.data, "Second\n\nThird");
+  assert.equal(client.calls[3].endpoint, "/api/sqlite/flushTransaction");
+  assert.deepEqual(result.structuredContent.insertedBlockIds, [insertedId]);
+  assert.equal(result.structuredContent.expanded, true);
+});

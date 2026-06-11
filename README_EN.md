@@ -4,7 +4,7 @@ MCP server for [SiYuan Note](https://github.com/siyuan-note/siyuan) — enables 
 
 Default Chinese documentation is available in [README.md](./README.md).
 
-Version 3.1.1 focuses on production-grade MCP ergonomics: `siyuan_*` tool names, optional legacy aliases, read-only mode, bounded SQL, typed structured outputs, resource links, safer write confirmations, daily-note workflows, batch editing, asset inspection, and broader coverage of SiYuan's native navigation/search/stat APIs.
+Version 3.1.2 fixes multi-block Markdown updates for regular blocks so `siyuan_update_block` and `siyuan_batch_update_blocks` do not silently drop blocks after the first one. Document-block updates are still passed to SiYuan as full-document replacements. It keeps the production-grade MCP ergonomics from v3: `siyuan_*` tool names, optional legacy aliases, read-only mode, bounded SQL, typed structured outputs, resource links, safer write confirmations, daily-note workflows, batch editing, asset inspection, and broad coverage of SiYuan's native navigation/search/stat APIs.
 
 ## Requirements
 
@@ -106,8 +106,8 @@ npm test      # runs the unit suite
 | `siyuan_append_block` | Append a block as the last child of a parent |
 | `siyuan_prepend_block` | Prepend a block as the first child of a parent |
 | `siyuan_batch_insert_blocks` | Insert up to 50 Markdown blocks in one batch; same-parent inserts preserve input order |
-| `siyuan_update_block` | Replace a block's content with new Markdown |
-| `siyuan_batch_update_blocks` | Replace up to 50 blocks in one batch |
+| `siyuan_update_block` | Replace a block's content with new Markdown; regular-block multi-block Markdown updates the first block and inserts the remaining blocks after it |
+| `siyuan_batch_update_blocks` | Replace up to 50 blocks; regular-block multi-block replacements are expanded safely to avoid dropping trailing blocks |
 | `siyuan_delete_block` | Delete a block and its children; requires `confirmId` |
 | `siyuan_move_block` | Move a block to a new position |
 

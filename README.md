@@ -7,7 +7,7 @@
 
 面向 [SiYuan 笔记](https://github.com/siyuan-note/siyuan) 的高质量 MCP Server。它让 Claude Code、OpenCode、Cursor 等 MCP 客户端通过 SiYuan HTTP Kernel API 安全地读取、搜索、写入和整理你的本地笔记工作空间。
 
-[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.1.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
+[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.2.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
 ## 你可以用它做什么
 
@@ -136,7 +136,7 @@ curl -H "Authorization: Token $SIYUAN_API_TOKEN" http://127.0.0.1:6806/api/syste
 | 创建结构化文档 | `siyuan_create_doc`，传入多行 Markdown |
 | 在文档末尾追加内容 | `siyuan_append_block` |
 | 批量插入多段内容 | `siyuan_batch_insert_blocks` |
-| 修订一段内容 | `siyuan_update_block` 或 `siyuan_batch_update_blocks` |
+| 修订一段或多段内容 | `siyuan_update_block` 或 `siyuan_batch_update_blocks`，普通块的多块 Markdown 会保留首块并把后续块插入到目标块之后 |
 | 删除内容 | `siyuan_delete_block` 或 `siyuan_remove_doc`，必须提供匹配的 `confirmId` |
 | 记录到当天日记 | `siyuan_append_daily_note_block` |
 | 查标签、书签和资产 | `siyuan_list_tags`、`siyuan_list_bookmarks`、`siyuan_search_assets` |
@@ -271,8 +271,8 @@ Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 | `siyuan_append_block` | 将块追加为父块的最后一个子块 |
 | `siyuan_prepend_block` | 将块前置为父块的第一个子块 |
 | `siyuan_batch_insert_blocks` | 一次批量插入最多 50 个 Markdown 块；同父块插入会保持输入顺序 |
-| `siyuan_update_block` | 用新的 Markdown 替换块内容 |
-| `siyuan_batch_update_blocks` | 一次批量替换最多 50 个块 |
+| `siyuan_update_block` | 用新的 Markdown 替换块内容；普通块的多块 Markdown 会把首块更新到原 ID，并将后续块插入到原块之后 |
+| `siyuan_batch_update_blocks` | 一次批量替换最多 50 个块；普通块包含多块 Markdown 时会自动展开，避免后续块丢失 |
 | `siyuan_delete_block` | 删除块及其子块；必须提供 `confirmId` |
 | `siyuan_move_block` | 将块移动到新位置 |
 

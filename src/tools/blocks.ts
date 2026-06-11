@@ -8,6 +8,7 @@ import {
   normalizeMarkdownInput,
   operationIdsFromTransactions,
   requireConfirmId,
+  splitMarkdownForBlockUpdate,
   toolError,
   toolResult,
 } from "../format.js";
@@ -36,6 +37,58 @@ function orderBatchInsertBlocks(blocks: BatchInsertBlock[]): BatchInsertBlock[] 
   const parentOnly = blocks.every((block) => block.parentID && !block.previousID && !block.nextID);
   const sameParent = new Set(blocks.map((block) => block.parentID)).size === 1;
   return parentOnly && sameParent ? [...blocks].reverse() : blocks;
+}
+
+function uniqueIds(ids: string[]): string[] {
+  return Array.from(new Set(ids.filter((id) => id !== "")));
+}
+
+async function updateBlockMarkdown(
+  client: SiYuanClient,
+  blockId: string,
+  markdown: string
+): Promise<{ operationIds: string[]; insertedBlockIds: string[]; expanded: boolean }> {
+  const split = splitMarkdownForBlockUpdate(markdown);
+  let updateMarkdown = split.firstBlock;
+  let remainingBlocks = split.remainingBlocks;
+
+  if (remainingBlocks) {
+    const info = await client.request<Record<string, unknown>>("/api/block/getBlockInfo", {
+      id: blockId,
+    });
+    if (info.rootID === blockId) {
+      updateMarkdown = normalizeMarkdownInput(markdown);
+      remainingBlocks = null;
+    }
+  }
+
+  const updateData = await client.request<unknown>("/api/block/updateBlock", {
+    dataType: "markdown",
+    data: updateMarkdown,
+    id: blockId,
+  });
+  const updateOperationIds = operationIdsFromTransactions(updateData);
+  const operationIds = [...updateOperationIds];
+  const insertedBlockIds: string[] = [];
+
+  if (remainingBlocks) {
+    const insertData = await client.request<unknown>("/api/block/insertBlock", {
+      dataType: "markdown",
+      data: remainingBlocks,
+      previousID: blockId,
+      nextID: "",
+      parentID: "",
+    });
+    const insertedIds = operationIdsFromTransactions(insertData);
+    insertedBlockIds.push(...insertedIds);
+    operationIds.push(...insertedIds);
+  }
+
+  return {
+    operationIds: uniqueIds(operationIds),
+    insertedBlockIds: uniqueIds(insertedBlockIds),
+    expanded: remainingBlocks !== null,
+  };
 }
 
 export function registerBlockTools(
@@ -213,31 +266,59 @@ export function registerBlockTools(
     {
       name: "siyuan_batch_update_blocks",
       title: "Batch update SiYuan blocks",
-      description: "Replace up to 50 blocks with Markdown in one SiYuan transaction batch.",
+      description:
+        "Replace up to 50 blocks with Markdown. Regular-block multi-block Markdown is expanded safely; document-block Markdown remains a full-document replacement.",
       inputSchema: BatchUpdateBlockInputSchema,
       outputSchema: z
         .object({
           count: z.number(),
           updated: z.array(z.string()),
           operationIds: z.array(z.string()),
+          insertedBlockIds: z.array(z.string()),
+          expanded: z.boolean(),
         })
         .strict(),
       annotations: WRITE_IDEMPOTENT,
     },
     async ({ blocks }) => {
       try {
-        const data = await client.request<unknown>("/api/block/batchUpdateBlock", {
-          blocks: blocks.map((block) => ({
-            id: block.blockId,
-            dataType: "markdown",
-            data: normalizeMarkdownInput(block.markdown),
-          })),
-        });
+        const splits = blocks.map((block) => ({
+          block,
+          split: splitMarkdownForBlockUpdate(block.markdown),
+        }));
+        let operationIds: string[];
+        let insertedBlockIds: string[] = [];
+        const hasMultiBlockInput = splits.some(({ split }) => split.remainingBlocks !== null);
+        let expanded = false;
+
+        if (hasMultiBlockInput) {
+          operationIds = [];
+          for (const { block } of splits) {
+            const result = await updateBlockMarkdown(client, block.blockId, block.markdown);
+            operationIds.push(...result.operationIds);
+            insertedBlockIds.push(...result.insertedBlockIds);
+            expanded ||= result.expanded;
+          }
+          operationIds = uniqueIds(operationIds);
+          insertedBlockIds = uniqueIds(insertedBlockIds);
+        } else {
+          const data = await client.request<unknown>("/api/block/batchUpdateBlock", {
+            blocks: splits.map(({ block, split }) => ({
+              id: block.blockId,
+              dataType: "markdown",
+              data: split.firstBlock,
+            })),
+          });
+          operationIds = operationIdsFromTransactions(data);
+        }
+
         await client.flushTransaction();
         return toolResult({
           count: blocks.length,
           updated: blocks.map((block) => block.blockId),
-          operationIds: operationIdsFromTransactions(data),
+          operationIds,
+          insertedBlockIds,
+          expanded,
         });
       } catch (err) {
         return toolError(`siyuan_batch_update_blocks failed: ${String(err)}`);
@@ -288,20 +369,24 @@ export function registerBlockTools(
       name: "siyuan_update_block",
       legacyName: "update_block",
       title: "Update SiYuan block",
-      description: "Replace a block's content with new Markdown.",
+      description:
+        "Replace a block's content with new Markdown. For regular blocks, multi-block Markdown updates the target block with the first block and inserts the remaining blocks immediately after it; document blocks remain full-document replacements.",
       inputSchema: z.object({ blockId: idSchema, markdown: markdownSchema }).strict(),
-      outputSchema: z.object({ updated: z.string(), operationIds: z.array(z.string()) }).strict(),
+      outputSchema: z
+        .object({
+          updated: z.string(),
+          operationIds: z.array(z.string()),
+          insertedBlockIds: z.array(z.string()),
+          expanded: z.boolean(),
+        })
+        .strict(),
       annotations: WRITE_IDEMPOTENT,
     },
     async ({ blockId, markdown }) => {
       try {
-        const data = await client.request<unknown>("/api/block/updateBlock", {
-          dataType: "markdown",
-          data: normalizeMarkdownInput(markdown),
-          id: blockId,
-        });
+        const result = await updateBlockMarkdown(client, blockId, markdown);
         await client.flushTransaction();
-        return toolResult({ updated: blockId, operationIds: operationIdsFromTransactions(data) });
+        return toolResult({ updated: blockId, ...result });
       } catch (err) {
         return toolError(`siyuan_update_block failed: ${String(err)}`);
       }
