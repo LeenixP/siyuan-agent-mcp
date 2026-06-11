@@ -1,175 +1,184 @@
 # siyuan-agent-mcp
 
-MCP server for [SiYuan Note](https://github.com/siyuan-note/siyuan) — enables AI clients (Claude Code, OpenCode, Cursor, …) to read, search, write, and reorganize notes through SiYuan's HTTP API.
+面向 [SiYuan 笔记](https://github.com/siyuan-note/siyuan) 的 MCP Server，让 Claude Code、OpenCode、Cursor 等 MCP 客户端可以通过 SiYuan HTTP API 读取、搜索、写入和整理笔记。
 
-Version 3.1.1 focuses on production-grade MCP ergonomics: `siyuan_*` tool names, optional legacy aliases, read-only mode, bounded SQL, typed structured outputs, resource links, safer write confirmations, daily-note workflows, batch editing, asset inspection, and broader coverage of SiYuan's native navigation/search/stat APIs.
+English documentation: [README_EN.md](./README_EN.md)
 
-## Requirements
+当前版本 3.1.1 聚焦生产级 MCP 使用体验：`siyuan_*` 工具命名、可选旧版别名、只读模式、受限 SQL、类型化结构输出、MCP 资源链接、更安全的写入确认、日记工作流、批量编辑、资产检查，以及对 SiYuan 原生导航、搜索、统计接口的更完整覆盖。
+
+## 环境要求
 
 - Node.js >= 18
-- SiYuan Note running with the kernel HTTP API enabled
-- SiYuan API token (in SiYuan under **Settings → About → API token**)
+- SiYuan 笔记正在运行，并启用 Kernel HTTP API
+- SiYuan API token，可在 SiYuan 的 设置 -> 关于 -> API token 中获取
 
-## Setup
+## 安装与构建
 
 ```bash
 npm install
 npm run build
-npm test      # runs the unit suite
+npm test      # 运行单元测试套件
 ```
 
-## Environment Variables
+## 环境变量
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |---|---|---|
-| `SIYUAN_API_URL` | `http://127.0.0.1:6806` | SiYuan kernel API base URL |
-| `SIYUAN_API_TOKEN` | _(required)_ | API token from SiYuan Settings → About |
-| `SIYUAN_TIMEOUT_MS` | `30000` | Per-request timeout in milliseconds |
-| `SIYUAN_MAX_CONCURRENCY` | `4` | Maximum concurrent requests sent to the SiYuan kernel |
-| `SIYUAN_RETRY_INDEXING_MS` | `1500` | Delay before one automatic retry when SiYuan reports indexing in progress (`code=3`); set `0` to disable |
-| `SIYUAN_READ_ONLY` | `false` | If `true`, only read-only tools are registered |
-| `SIYUAN_ENABLE_LEGACY_ALIASES` | `false` | If `true`, pre-v3 names like `read_doc` are also registered |
-| `SIYUAN_ENABLE_SQL` | `true` | If `false`, hides the raw SQL escape hatch |
-| `SIYUAN_ENABLE_DANGEROUS_TOOLS` | `false` | If `true`, exposes extra high-risk tools such as notebook deletion |
+| `SIYUAN_API_URL` | `http://127.0.0.1:6806` | SiYuan Kernel API 地址 |
+| `SIYUAN_API_TOKEN` | 必填 | SiYuan API token |
+| `SIYUAN_TIMEOUT_MS` | `30000` | 单次请求超时时间，单位毫秒 |
+| `SIYUAN_MAX_CONCURRENCY` | `4` | 发往 SiYuan Kernel 的最大并发请求数 |
+| `SIYUAN_RETRY_INDEXING_MS` | `1500` | SiYuan 返回索引中状态时，自动重试一次前等待的毫秒数；设为 `0` 可关闭 |
+| `SIYUAN_READ_ONLY` | `false` | 设为 `true` 时只注册只读工具 |
+| `SIYUAN_ENABLE_LEGACY_ALIASES` | `false` | 设为 `true` 时同时注册 v3 之前的工具名，如 `read_doc` |
+| `SIYUAN_ENABLE_SQL` | `true` | 设为 `false` 时隐藏原始 SQL 查询工具 |
+| `SIYUAN_ENABLE_DANGEROUS_TOOLS` | `false` | 设为 `true` 时暴露额外高风险工具，如删除笔记本 |
 
-## Tools
+## 工具能力
 
-### Navigation & search
-| Tool | Description |
+### 导航与搜索
+
+| 工具 | 说明 |
 |---|---|
-| `siyuan_health` | Check kernel reachability, version, boot progress, notebook access, and MCP modes |
-| `siyuan_list_notebooks` | List all notebooks with IDs and open/closed state |
-| `siyuan_list_docs` | List documents with filetree-first traversal and pagination |
-| `siyuan_list_docs_by_path` | List direct child documents/files under a notebook path |
-| `siyuan_get_doc_path` | Resolve a document/block ID to hpath, full hpath, and storage path |
-| `siyuan_resolve_doc_path` | Resolve a notebook human-readable path to document IDs |
-| `siyuan_search_notes` | Full-text search with keyword/query-syntax/regex, type filters, and resource links |
-| `siyuan_query_blocks` | Typed, bounded query over the `blocks` index |
-| `siyuan_sql_query` | Bounded read-only SELECT escape hatch; requires numeric `LIMIT <= 1000` |
+| `siyuan_health` | 检查 Kernel 连通性、版本、启动进度、笔记本访问状态和 MCP 模式 |
+| `siyuan_list_notebooks` | 列出所有笔记本，包括 ID 和打开/关闭状态 |
+| `siyuan_list_docs` | 使用文档树优先的方式分页列出文档 |
+| `siyuan_list_docs_by_path` | 按笔记本路径列出直接子文档或文件 |
+| `siyuan_get_doc_path` | 根据文档或块 ID 获取可读路径、完整可读路径和存储路径 |
+| `siyuan_resolve_doc_path` | 根据笔记本中的可读路径解析文档 ID |
+| `siyuan_search_notes` | 全文搜索，支持关键词、查询语法、正则、类型过滤和资源链接 |
+| `siyuan_query_blocks` | 对 `blocks` 索引执行类型化、受限查询 |
+| `siyuan_sql_query` | 受限只读 SELECT 查询；必须带数字 `LIMIT <= 1000` |
 
-### Reading
-| Tool | Description |
+### 读取
+
+| 工具 | 说明 |
 |---|---|
-| `siyuan_read_doc` | Read a document's Markdown content with truncation metadata |
-| `siyuan_get_block` | Single block detail: kramdown + attributes + metadata + warnings |
-| `siyuan_batch_get_blocks` | Batch-read kramdown for up to 50 blocks |
-| `siyuan_get_doc_outline` | Heading hierarchy of a document |
-| `siyuan_get_doc_info` | Document metadata from SiYuan |
-| `siyuan_get_backlinks` | Backlinks and unlinked mentions with counts |
-| `siyuan_get_child_blocks` | Direct child blocks of a block |
-| `siyuan_get_tail_child_blocks` | Last N direct child blocks of a block |
-| `siyuan_get_block_breadcrumb` | Breadcrumb for a block |
-| `siyuan_get_block_siblings` | Parent/previous/next block IDs |
-| `siyuan_get_block_index` | Sibling index for a block |
-| `siyuan_get_ref_ids` | Reference definitions and original reference block IDs |
-| `siyuan_get_ref_text` | Display text used for block references |
-| `siyuan_check_block_exists` | Check whether a block exists |
-| `siyuan_get_recent_docs` | Recent documents from SiYuan storage |
-| `siyuan_get_recent_updated_blocks` | Recently updated blocks |
-| `siyuan_get_tree_stat` | Document/tree statistics |
-| `siyuan_get_blocks_word_count` | Word-count stats for blocks |
-| `siyuan_read_workspace_overview` | Compact workspace orientation |
+| `siyuan_read_doc` | 读取文档 Markdown，并返回截断元数据 |
+| `siyuan_get_block` | 读取单个块的 kramdown、属性、元数据和警告信息 |
+| `siyuan_batch_get_blocks` | 批量读取最多 50 个块的 kramdown |
+| `siyuan_get_doc_outline` | 读取文档标题层级大纲 |
+| `siyuan_get_doc_info` | 读取 SiYuan 文档元数据 |
+| `siyuan_get_backlinks` | 读取反链和未链接提及，并返回数量 |
+| `siyuan_get_child_blocks` | 读取一个块的直接子块 |
+| `siyuan_get_tail_child_blocks` | 读取一个块最后 N 个直接子块 |
+| `siyuan_get_block_breadcrumb` | 读取块面包屑 |
+| `siyuan_get_block_siblings` | 读取块的父块、前一个块、后一个块 ID |
+| `siyuan_get_block_index` | 读取块在同级中的索引 |
+| `siyuan_get_ref_ids` | 读取引用定义和原始引用块 ID |
+| `siyuan_get_ref_text` | 读取块引用显示文本 |
+| `siyuan_check_block_exists` | 检查块是否存在 |
+| `siyuan_get_recent_docs` | 读取 SiYuan 存储中的最近文档 |
+| `siyuan_get_recent_updated_blocks` | 读取最近更新块 |
+| `siyuan_get_tree_stat` | 读取文档树统计信息 |
+| `siyuan_get_blocks_word_count` | 读取块字数统计 |
+| `siyuan_read_workspace_overview` | 读取紧凑的工作区概览 |
 
-### Knowledge discovery
-| Tool | Description |
+### 知识发现
+
+| 工具 | 说明 |
 |---|---|
-| `siyuan_list_tags` | List tags built by SiYuan |
-| `siyuan_search_tags` | Search tag labels |
-| `siyuan_list_bookmarks` | List bookmark groups |
-| `siyuan_search_assets` | Search assets by filename |
-| `siyuan_get_doc_assets` | List assets referenced by a document, optionally images only |
-| `siyuan_get_missing_assets` | List missing asset references |
-| `siyuan_get_unused_assets` | List unreferenced assets, bounded client-side |
-| `siyuan_resolve_asset_path` | Resolve a workspace asset path to its local path |
-| `siyuan_search_asset_content` | Full-text search indexed asset content |
-| `siyuan_get_asset_content` | Read indexed content for an asset |
-| `siyuan_list_invalid_refs` | Find broken block references |
+| `siyuan_list_tags` | 列出 SiYuan 构建的标签 |
+| `siyuan_search_tags` | 搜索标签名称 |
+| `siyuan_list_bookmarks` | 列出书签分组 |
+| `siyuan_search_assets` | 按文件名搜索资产 |
+| `siyuan_get_doc_assets` | 列出文档引用的资产，可选择只返回图片 |
+| `siyuan_get_missing_assets` | 列出缺失资产引用 |
+| `siyuan_get_unused_assets` | 列出未引用资产，并在客户端侧做数量限制 |
+| `siyuan_resolve_asset_path` | 将工作空间资产路径解析为本地路径 |
+| `siyuan_search_asset_content` | 全文搜索已索引的资产内容 |
+| `siyuan_get_asset_content` | 读取单个资产的已索引内容 |
+| `siyuan_list_invalid_refs` | 查找失效块引用 |
 
-### Document management
-| Tool | Description |
+### 文档管理
+
+| 工具 | 说明 |
 |---|---|
-| `siyuan_create_doc` | Create a document (optionally nested, with initial Markdown); same path returns the existing document |
-| `siyuan_create_daily_note` | Create/open today's daily note in a notebook |
-| `siyuan_append_daily_note_block` | Create/open today's daily note and append a block |
-| `siyuan_prepend_daily_note_block` | Create/open today's daily note and prepend a block |
-| `siyuan_duplicate_doc` | Duplicate a document by ID |
-| `siyuan_rename_doc` | Rename a document by ID |
-| `siyuan_move_docs` | Move documents under a parent doc or notebook root |
-| `siyuan_remove_doc` | Delete a document and its children; requires `confirmId` |
+| `siyuan_create_doc` | 创建文档，支持嵌套路径和初始 Markdown；同路径已有文档时返回已有文档 |
+| `siyuan_create_daily_note` | 创建或打开当天日记 |
+| `siyuan_append_daily_note_block` | 创建或打开当天日记，并向末尾追加块 |
+| `siyuan_prepend_daily_note_block` | 创建或打开当天日记，并向开头前置块 |
+| `siyuan_duplicate_doc` | 按 ID 复制文档 |
+| `siyuan_rename_doc` | 按 ID 重命名文档 |
+| `siyuan_move_docs` | 将文档移动到父文档下或笔记本根目录 |
+| `siyuan_remove_doc` | 删除文档及其子文档；必须提供 `confirmId` |
 
-### Block editing
-| Tool | Description |
+### 块编辑
+
+| 工具 | 说明 |
 |---|---|
-| `siyuan_insert_block` | Insert a Markdown block at a precise position |
-| `siyuan_append_block` | Append a block as the last child of a parent |
-| `siyuan_prepend_block` | Prepend a block as the first child of a parent |
-| `siyuan_batch_insert_blocks` | Insert up to 50 Markdown blocks in one batch; same-parent inserts preserve input order |
-| `siyuan_update_block` | Replace a block's content with new Markdown |
-| `siyuan_batch_update_blocks` | Replace up to 50 blocks in one batch |
-| `siyuan_delete_block` | Delete a block and its children; requires `confirmId` |
-| `siyuan_move_block` | Move a block to a new position |
+| `siyuan_insert_block` | 在精确位置插入 Markdown 块 |
+| `siyuan_append_block` | 将块追加为父块的最后一个子块 |
+| `siyuan_prepend_block` | 将块前置为父块的第一个子块 |
+| `siyuan_batch_insert_blocks` | 一次批量插入最多 50 个 Markdown 块；同父块插入会保持输入顺序 |
+| `siyuan_update_block` | 用新的 Markdown 替换块内容 |
+| `siyuan_batch_update_blocks` | 一次批量替换最多 50 个块 |
+| `siyuan_delete_block` | 删除块及其子块；必须提供 `confirmId` |
+| `siyuan_move_block` | 将块移动到新位置 |
 
-### Attributes & notebooks
-| Tool | Description |
+### 属性与笔记本
+
+| 工具 | 说明 |
 |---|---|
-| `siyuan_get_block_attrs` | Read a block's attributes |
-| `siyuan_batch_get_block_attrs` | Batch-read attributes for up to 100 blocks |
-| `siyuan_set_block_attrs` | Set/remove attributes (`name`/`alias`/`memo`/`bookmark` or `custom-*`) |
-| `siyuan_batch_set_block_attrs` | Set/remove attributes for up to 100 blocks |
-| `siyuan_get_notebook_info` | Read detailed metadata for an open notebook |
-| `siyuan_create_notebook` | Create a notebook |
-| `siyuan_rename_notebook` | Rename a notebook |
-| `siyuan_set_notebook_icon` | Set a notebook icon |
-| `siyuan_open_notebook` | Open (mount) a notebook so its docs are indexed |
-| `siyuan_close_notebook` | Close (unmount) a notebook |
-| `siyuan_remove_notebook` | Delete a notebook; hidden unless `SIYUAN_ENABLE_DANGEROUS_TOOLS=true`, requires `confirmId` and `confirmText` |
+| `siyuan_get_block_attrs` | 读取块属性 |
+| `siyuan_batch_get_block_attrs` | 批量读取最多 100 个块的属性 |
+| `siyuan_set_block_attrs` | 设置或移除属性，支持 `name`、`alias`、`memo`、`bookmark` 和 `custom-*` |
+| `siyuan_batch_set_block_attrs` | 批量设置或移除最多 100 个块的属性 |
+| `siyuan_get_notebook_info` | 读取已打开笔记本的详细元数据 |
+| `siyuan_create_notebook` | 创建笔记本 |
+| `siyuan_rename_notebook` | 重命名笔记本 |
+| `siyuan_set_notebook_icon` | 设置笔记本图标 |
+| `siyuan_open_notebook` | 打开或挂载笔记本，使其文档可被索引 |
+| `siyuan_close_notebook` | 关闭或卸载笔记本 |
+| `siyuan_remove_notebook` | 删除笔记本；默认隐藏，只有 `SIYUAN_ENABLE_DANGEROUS_TOOLS=true` 时暴露，并且必须提供 `confirmId` 和 `confirmText` |
 
-## Resources
+## MCP 资源
 
-The server registers URI templates so clients can fetch context directly:
+Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 
-| Resource URI | Content |
+| 资源 URI | 内容 |
 |---|---|
-| `siyuan://doc/{id}` | Document Markdown |
-| `siyuan://block/{id}` | Block kramdown |
-| `siyuan://notebook/{id}` | Notebook metadata JSON |
+| `siyuan://doc/{id}` | 文档 Markdown |
+| `siyuan://block/{id}` | 块 kramdown |
+| `siyuan://notebook/{id}` | 笔记本 JSON 元数据 |
 
-## Recommended workflow
+## 推荐工作流
 
-The tools are designed to compose. A typical agent flow:
+这些工具可以组合使用。典型流程如下：
 
-1. **Locate** — `siyuan_list_notebooks` / `siyuan_list_docs`, or `siyuan_search_notes`.
-2. **Orient** — `siyuan_get_doc_outline`, `siyuan_get_backlinks`, `siyuan_get_block_breadcrumb`.
-3. **Read** — `siyuan_read_doc`, `siyuan_get_block`, `siyuan_batch_get_blocks`, or MCP resources.
-4. **Edit** — `siyuan_append_block` / `siyuan_prepend_block` for simple additions, `siyuan_insert_block` for exact placement, batch tools for multi-block edits, `siyuan_update_block` to revise, and `siyuan_move_block` / `siyuan_move_docs` to reorganize.
-5. **Analyze** — prefer `siyuan_query_blocks`; use `siyuan_sql_query` only for bounded advanced read-only queries.
-6. **Capture** — use `siyuan_create_daily_note` or daily-note block tools for journal/inbox workflows.
+1. **定位**：使用 `siyuan_list_notebooks`、`siyuan_list_docs` 或 `siyuan_search_notes`。
+2. **理解上下文**：使用 `siyuan_get_doc_outline`、`siyuan_get_backlinks`、`siyuan_get_block_breadcrumb`。
+3. **读取**：使用 `siyuan_read_doc`、`siyuan_get_block`、`siyuan_batch_get_blocks` 或 MCP 资源。
+4. **编辑**：简单追加用 `siyuan_append_block` 或 `siyuan_prepend_block`，精确位置用 `siyuan_insert_block`，多块变更用批量工具，修订内容用 `siyuan_update_block`，重组内容用 `siyuan_move_block` 或 `siyuan_move_docs`。
+5. **分析**：优先使用 `siyuan_query_blocks`；只有高级只读查询场景才使用 `siyuan_sql_query`。
+6. **记录**：日记和 inbox 场景使用 `siyuan_create_daily_note` 或 daily-note 块工具。
 
-Notes:
-- Write tools flush SiYuan's transaction before returning, so reads/search immediately after a write see the new data.
-- Markdown write tools normalize literal escaped line breaks such as `\n` into real line breaks when the input has no real newlines.
-- `siyuan_create_doc` does not create a duplicate when the target human-readable path already exists; it returns the existing document ID with `existed=true` and `created=false`.
-- `siyuan_insert_block` requires exactly one anchor: `previousID`, `nextID`, or `parentID`.
-- `siyuan_batch_insert_blocks` reverses same-parent parentID-only batches before sending them to SiYuan so the final document order matches the input order.
-- `siyuan_remove_doc` and `siyuan_delete_block` require `confirmId` equal to the target ID.
-- `siyuan_remove_notebook` is hidden by default; enabling it requires `SIYUAN_ENABLE_DANGEROUS_TOOLS=true` and each call requires both `confirmId` and exact `confirmText`.
-- Only documents in **open** notebooks are indexed by search.
+补充说明：
 
-## Safety
+- 写入工具返回前会刷新 SiYuan transaction，因此写入后的读取和搜索能看到新数据。
+- Markdown 写入工具会在输入没有真实换行时，将 `\n` 这类字面转义转换成真实换行，避免多行 Markdown 被 SiYuan 当成单行文本解析。
+- `siyuan_create_doc` 在目标可读路径已存在时不会创建同名重复文档，而是返回已有文档 ID，并设置 `existed=true`、`created=false`。
+- `siyuan_insert_block` 必须且只能提供一个锚点：`previousID`、`nextID` 或 `parentID`。
+- `siyuan_batch_insert_blocks` 对同一个 `parentID` 的 parentID-only 批量插入会在发送给 SiYuan 前反向提交，从而让最终文档顺序与输入顺序一致。
+- `siyuan_remove_doc` 和 `siyuan_delete_block` 必须提供与目标 ID 相同的 `confirmId`。
+- `siyuan_remove_notebook` 默认隐藏；启用需要 `SIYUAN_ENABLE_DANGEROUS_TOOLS=true`，每次调用还必须提供 `confirmId` 和精确 `confirmText`。
+- 只有已打开笔记本中的文档会被搜索索引覆盖。
 
-- `siyuan_read_doc` / `siyuan_get_block` truncate very large content and return truncation metadata.
-- `siyuan_sql_query` is enforced read-only, requires numeric `LIMIT <= 1000`, and rejects multi-statements/write keywords outside string literals.
-- Destructive tools require explicit `confirmId` and are annotated `destructiveHint`.
-- `SIYUAN_READ_ONLY=true` removes all write/state-changing tools from the exposed MCP tool list.
-- `SIYUAN_ENABLE_DANGEROUS_TOOLS=false` keeps high-risk tools such as notebook deletion out of the exposed MCP tool list.
-- The client limits concurrent kernel calls and retries once when SiYuan reports indexing in progress.
-- A remote `SIYUAN_API_URL` without HTTPS logs a cleartext-token warning; credentials embedded in the URL are masked in logs.
+## 安全策略
 
-## Configuration Examples
+- `siyuan_read_doc` 和 `siyuan_get_block` 会截断超大内容，并返回截断元数据。
+- `siyuan_sql_query` 强制只读，必须带数字 `LIMIT <= 1000`，并拒绝多语句和字符串字面量之外的写入关键字。
+- 破坏性工具必须提供显式 `confirmId`，并标记 `destructiveHint`。
+- `SIYUAN_READ_ONLY=true` 会从暴露的 MCP 工具列表中移除所有写入和状态变更工具。
+- `SIYUAN_ENABLE_DANGEROUS_TOOLS=false` 会将删除笔记本等高风险工具从暴露的 MCP 工具列表中隐藏。
+- 客户端会限制发往 Kernel 的并发请求，并在 SiYuan 报告索引中时自动重试一次。
+- 远程非 HTTPS 的 `SIYUAN_API_URL` 会输出明文 token 风险警告，日志会隐藏 URL 中嵌入的凭据。
+
+## 客户端配置示例
 
 ### Claude Code
 
-Add to `~/.claude/settings.json` (or project `.claude/settings.local.json`):
+添加到 `~/.claude/settings.json` 或项目级 `.claude/settings.local.json`：
 
 ```json
 {
@@ -189,7 +198,7 @@ Add to `~/.claude/settings.json` (or project `.claude/settings.local.json`):
 
 ### OpenCode
 
-Add to `opencode.json` under the `mcp` key:
+添加到 `opencode.json` 的 `mcp` 字段下：
 
 ```json
 {
@@ -210,7 +219,7 @@ Add to `opencode.json` under the `mcp` key:
 
 ### Cursor
 
-Add to `~/.cursor/mcp.json`:
+添加到 `~/.cursor/mcp.json`：
 
 ```json
 {
@@ -228,32 +237,34 @@ Add to `~/.cursor/mcp.json`:
 }
 ```
 
-## Manual end-to-end check (with a running SiYuan)
+## 手工端到端检查
+
+在 SiYuan 正在运行时执行：
 
 ```bash
 npx @modelcontextprotocol/inspector node dist/index.js
 ```
 
-Then exercise: `siyuan_health` → `siyuan_list_notebooks` → `siyuan_list_docs` → `siyuan_search_notes` (keyword + regex) → `siyuan_read_doc` → `siyuan_get_doc_outline` / `siyuan_get_backlinks` → write chain (`siyuan_create_doc` → `siyuan_append_block` → `siyuan_batch_update_blocks` → `siyuan_search_notes` confirms it's indexed → `siyuan_delete_block` with `confirmId` → `siyuan_remove_doc` with `confirmId`) → daily-note chain (`siyuan_create_daily_note` → `siyuan_append_daily_note_block`) → verify `siyuan_sql_query` rejects `DELETE FROM blocks`.
+建议按以下链路验证：
 
-## Development
+`siyuan_health` -> `siyuan_list_notebooks` -> `siyuan_list_docs` -> `siyuan_search_notes`（关键词和正则）-> `siyuan_read_doc` -> `siyuan_get_doc_outline` / `siyuan_get_backlinks` -> 写入链路（`siyuan_create_doc` -> `siyuan_append_block` -> `siyuan_batch_update_blocks` -> `siyuan_search_notes` 确认已索引 -> 带 `confirmId` 调用 `siyuan_delete_block` -> 带 `confirmId` 调用 `siyuan_remove_doc`）-> 日记链路（`siyuan_create_daily_note` -> `siyuan_append_daily_note_block`）-> 验证 `siyuan_sql_query` 会拒绝 `DELETE FROM blocks`。
 
-```
+## 开发结构
+
+```text
 src/
-  index.ts            # assemble server, register tools, connect stdio
-  config.ts           # env parsing & validation
-  client.ts           # SiYuanClient: auth, errors, flushTransaction
-  types.ts            # SiYuan data structures
-  schemas.ts          # shared Zod schemas
-  format.ts           # ID validation, response shaping, escaping, truncation
-  tooling.ts          # tool registration helpers and annotations
+  index.ts            # 组装 server，注册工具，连接 stdio
+  config.ts           # 环境变量解析与校验
+  client.ts           # SiYuanClient：认证、错误处理、flushTransaction
+  types.ts            # SiYuan 数据结构
+  schemas.ts          # 共享 Zod schema
+  format.ts           # ID 校验、响应格式化、转义、截断
+  tooling.ts          # 工具注册辅助和 annotations
   resources.ts        # MCP resource templates
-  tools/              # one module per tool group
-test/                 # node --test unit + tool contract suite (runs against dist/)
-evaluation/           # mcp-builder evaluation suite
+  tools/              # 按工具分组拆分模块
+test/                 # node --test 单元测试和工具契约测试，针对 dist/ 运行
+evaluation/           # mcp-builder 评估套件
 ```
-
-Chinese documentation is available in [READM_CN.md](./READM_CN.md).
 
 ## License
 

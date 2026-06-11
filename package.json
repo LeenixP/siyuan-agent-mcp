@@ -9,7 +9,7 @@
   "files": [
     "dist",
     "README.md",
-    "READM_CN.md"
+    "README_EN.md"
   ],
   "scripts": {
     "build": "tsc",

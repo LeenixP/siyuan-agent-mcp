@@ -1,0 +1,260 @@
+# siyuan-agent-mcp
+
+MCP server for [SiYuan Note](https://github.com/siyuan-note/siyuan) — enables AI clients (Claude Code, OpenCode, Cursor, …) to read, search, write, and reorganize notes through SiYuan's HTTP API.
+
+Default Chinese documentation is available in [README.md](./README.md).
+
+Version 3.1.1 focuses on production-grade MCP ergonomics: `siyuan_*` tool names, optional legacy aliases, read-only mode, bounded SQL, typed structured outputs, resource links, safer write confirmations, daily-note workflows, batch editing, asset inspection, and broader coverage of SiYuan's native navigation/search/stat APIs.
+
+## Requirements
+
+- Node.js >= 18
+- SiYuan Note running with the kernel HTTP API enabled
+- SiYuan API token (in SiYuan under **Settings → About → API token**)
+
+## Setup
+
+```bash
+npm install
+npm run build
+npm test      # runs the unit suite
+```
+
+## Environment Variables
+
+| Variable | Default | Description |
+|---|---|---|
+| `SIYUAN_API_URL` | `http://127.0.0.1:6806` | SiYuan kernel API base URL |
+| `SIYUAN_API_TOKEN` | _(required)_ | API token from SiYuan Settings → About |
+| `SIYUAN_TIMEOUT_MS` | `30000` | Per-request timeout in milliseconds |
+| `SIYUAN_MAX_CONCURRENCY` | `4` | Maximum concurrent requests sent to the SiYuan kernel |
+| `SIYUAN_RETRY_INDEXING_MS` | `1500` | Delay before one automatic retry when SiYuan reports indexing in progress (`code=3`); set `0` to disable |
+| `SIYUAN_READ_ONLY` | `false` | If `true`, only read-only tools are registered |
+| `SIYUAN_ENABLE_LEGACY_ALIASES` | `false` | If `true`, pre-v3 names like `read_doc` are also registered |
+| `SIYUAN_ENABLE_SQL` | `true` | If `false`, hides the raw SQL escape hatch |
+| `SIYUAN_ENABLE_DANGEROUS_TOOLS` | `false` | If `true`, exposes extra high-risk tools such as notebook deletion |
+
+## Tools
+
+### Navigation & search
+| Tool | Description |
+|---|---|
+| `siyuan_health` | Check kernel reachability, version, boot progress, notebook access, and MCP modes |
+| `siyuan_list_notebooks` | List all notebooks with IDs and open/closed state |
+| `siyuan_list_docs` | List documents with filetree-first traversal and pagination |
+| `siyuan_list_docs_by_path` | List direct child documents/files under a notebook path |
+| `siyuan_get_doc_path` | Resolve a document/block ID to hpath, full hpath, and storage path |
+| `siyuan_resolve_doc_path` | Resolve a notebook human-readable path to document IDs |
+| `siyuan_search_notes` | Full-text search with keyword/query-syntax/regex, type filters, and resource links |
+| `siyuan_query_blocks` | Typed, bounded query over the `blocks` index |
+| `siyuan_sql_query` | Bounded read-only SELECT escape hatch; requires numeric `LIMIT <= 1000` |
+
+### Reading
+| Tool | Description |
+|---|---|
+| `siyuan_read_doc` | Read a document's Markdown content with truncation metadata |
+| `siyuan_get_block` | Single block detail: kramdown + attributes + metadata + warnings |
+| `siyuan_batch_get_blocks` | Batch-read kramdown for up to 50 blocks |
+| `siyuan_get_doc_outline` | Heading hierarchy of a document |
+| `siyuan_get_doc_info` | Document metadata from SiYuan |
+| `siyuan_get_backlinks` | Backlinks and unlinked mentions with counts |
+| `siyuan_get_child_blocks` | Direct child blocks of a block |
+| `siyuan_get_tail_child_blocks` | Last N direct child blocks of a block |
+| `siyuan_get_block_breadcrumb` | Breadcrumb for a block |
+| `siyuan_get_block_siblings` | Parent/previous/next block IDs |
+| `siyuan_get_block_index` | Sibling index for a block |
+| `siyuan_get_ref_ids` | Reference definitions and original reference block IDs |
+| `siyuan_get_ref_text` | Display text used for block references |
+| `siyuan_check_block_exists` | Check whether a block exists |
+| `siyuan_get_recent_docs` | Recent documents from SiYuan storage |
+| `siyuan_get_recent_updated_blocks` | Recently updated blocks |
+| `siyuan_get_tree_stat` | Document/tree statistics |
+| `siyuan_get_blocks_word_count` | Word-count stats for blocks |
+| `siyuan_read_workspace_overview` | Compact workspace orientation |
+
+### Knowledge discovery
+| Tool | Description |
+|---|---|
+| `siyuan_list_tags` | List tags built by SiYuan |
+| `siyuan_search_tags` | Search tag labels |
+| `siyuan_list_bookmarks` | List bookmark groups |
+| `siyuan_search_assets` | Search assets by filename |
+| `siyuan_get_doc_assets` | List assets referenced by a document, optionally images only |
+| `siyuan_get_missing_assets` | List missing asset references |
+| `siyuan_get_unused_assets` | List unreferenced assets, bounded client-side |
+| `siyuan_resolve_asset_path` | Resolve a workspace asset path to its local path |
+| `siyuan_search_asset_content` | Full-text search indexed asset content |
+| `siyuan_get_asset_content` | Read indexed content for an asset |
+| `siyuan_list_invalid_refs` | Find broken block references |
+
+### Document management
+| Tool | Description |
+|---|---|
+| `siyuan_create_doc` | Create a document (optionally nested, with initial Markdown); same path returns the existing document |
+| `siyuan_create_daily_note` | Create/open today's daily note in a notebook |
+| `siyuan_append_daily_note_block` | Create/open today's daily note and append a block |
+| `siyuan_prepend_daily_note_block` | Create/open today's daily note and prepend a block |
+| `siyuan_duplicate_doc` | Duplicate a document by ID |
+| `siyuan_rename_doc` | Rename a document by ID |
+| `siyuan_move_docs` | Move documents under a parent doc or notebook root |
+| `siyuan_remove_doc` | Delete a document and its children; requires `confirmId` |
+
+### Block editing
+| Tool | Description |
+|---|---|
+| `siyuan_insert_block` | Insert a Markdown block at a precise position |
+| `siyuan_append_block` | Append a block as the last child of a parent |
+| `siyuan_prepend_block` | Prepend a block as the first child of a parent |
+| `siyuan_batch_insert_blocks` | Insert up to 50 Markdown blocks in one batch; same-parent inserts preserve input order |
+| `siyuan_update_block` | Replace a block's content with new Markdown |
+| `siyuan_batch_update_blocks` | Replace up to 50 blocks in one batch |
+| `siyuan_delete_block` | Delete a block and its children; requires `confirmId` |
+| `siyuan_move_block` | Move a block to a new position |
+
+### Attributes & notebooks
+| Tool | Description |
+|---|---|
+| `siyuan_get_block_attrs` | Read a block's attributes |
+| `siyuan_batch_get_block_attrs` | Batch-read attributes for up to 100 blocks |
+| `siyuan_set_block_attrs` | Set/remove attributes (`name`/`alias`/`memo`/`bookmark` or `custom-*`) |
+| `siyuan_batch_set_block_attrs` | Set/remove attributes for up to 100 blocks |
+| `siyuan_get_notebook_info` | Read detailed metadata for an open notebook |
+| `siyuan_create_notebook` | Create a notebook |
+| `siyuan_rename_notebook` | Rename a notebook |
+| `siyuan_set_notebook_icon` | Set a notebook icon |
+| `siyuan_open_notebook` | Open (mount) a notebook so its docs are indexed |
+| `siyuan_close_notebook` | Close (unmount) a notebook |
+| `siyuan_remove_notebook` | Delete a notebook; hidden unless `SIYUAN_ENABLE_DANGEROUS_TOOLS=true`, requires `confirmId` and `confirmText` |
+
+## Resources
+
+The server registers URI templates so clients can fetch context directly:
+
+| Resource URI | Content |
+|---|---|
+| `siyuan://doc/{id}` | Document Markdown |
+| `siyuan://block/{id}` | Block kramdown |
+| `siyuan://notebook/{id}` | Notebook metadata JSON |
+
+## Recommended workflow
+
+The tools are designed to compose. A typical agent flow:
+
+1. **Locate** — `siyuan_list_notebooks` / `siyuan_list_docs`, or `siyuan_search_notes`.
+2. **Orient** — `siyuan_get_doc_outline`, `siyuan_get_backlinks`, `siyuan_get_block_breadcrumb`.
+3. **Read** — `siyuan_read_doc`, `siyuan_get_block`, `siyuan_batch_get_blocks`, or MCP resources.
+4. **Edit** — `siyuan_append_block` / `siyuan_prepend_block` for simple additions, `siyuan_insert_block` for exact placement, batch tools for multi-block edits, `siyuan_update_block` to revise, and `siyuan_move_block` / `siyuan_move_docs` to reorganize.
+5. **Analyze** — prefer `siyuan_query_blocks`; use `siyuan_sql_query` only for bounded advanced read-only queries.
+6. **Capture** — use `siyuan_create_daily_note` or daily-note block tools for journal/inbox workflows.
+
+Notes:
+- Write tools flush SiYuan's transaction before returning, so reads/search immediately after a write see the new data.
+- Markdown write tools normalize literal escaped line breaks such as `\n` into real line breaks when the input has no real newlines.
+- `siyuan_create_doc` does not create a duplicate when the target human-readable path already exists; it returns the existing document ID with `existed=true` and `created=false`.
+- `siyuan_insert_block` requires exactly one anchor: `previousID`, `nextID`, or `parentID`.
+- `siyuan_batch_insert_blocks` reverses same-parent parentID-only batches before sending them to SiYuan so the final document order matches the input order.
+- `siyuan_remove_doc` and `siyuan_delete_block` require `confirmId` equal to the target ID.
+- `siyuan_remove_notebook` is hidden by default; enabling it requires `SIYUAN_ENABLE_DANGEROUS_TOOLS=true` and each call requires both `confirmId` and exact `confirmText`.
+- Only documents in **open** notebooks are indexed by search.
+
+## Safety
+
+- `siyuan_read_doc` / `siyuan_get_block` truncate very large content and return truncation metadata.
+- `siyuan_sql_query` is enforced read-only, requires numeric `LIMIT <= 1000`, and rejects multi-statements/write keywords outside string literals.
+- Destructive tools require explicit `confirmId` and are annotated `destructiveHint`.
+- `SIYUAN_READ_ONLY=true` removes all write/state-changing tools from the exposed MCP tool list.
+- `SIYUAN_ENABLE_DANGEROUS_TOOLS=false` keeps high-risk tools such as notebook deletion out of the exposed MCP tool list.
+- The client limits concurrent kernel calls and retries once when SiYuan reports indexing in progress.
+- A remote `SIYUAN_API_URL` without HTTPS logs a cleartext-token warning; credentials embedded in the URL are masked in logs.
+
+## Configuration Examples
+
+### Claude Code
+
+Add to `~/.claude/settings.json` (or project `.claude/settings.local.json`):
+
+```json
+{
+  "mcpServers": {
+    "siyuan": {
+      "command": "npx",
+      "args": ["-y", "siyuan-agent-mcp"],
+      "env": {
+        "SIYUAN_API_URL": "http://127.0.0.1:6806",
+        "SIYUAN_API_TOKEN": "your-api-token-here",
+        "SIYUAN_READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
+
+### OpenCode
+
+Add to `opencode.json` under the `mcp` key:
+
+```json
+{
+  "mcp": {
+    "siyuan": {
+      "type": "local",
+      "enabled": true,
+      "command": ["npx", "-y", "siyuan-agent-mcp"],
+      "environment": {
+        "SIYUAN_API_URL": "http://127.0.0.1:6806",
+        "SIYUAN_API_TOKEN": "your-api-token-here",
+        "SIYUAN_READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
+
+### Cursor
+
+Add to `~/.cursor/mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "siyuan": {
+      "command": "npx",
+      "args": ["-y", "siyuan-agent-mcp"],
+      "env": {
+        "SIYUAN_API_URL": "http://127.0.0.1:6806",
+        "SIYUAN_API_TOKEN": "your-api-token-here",
+        "SIYUAN_READ_ONLY": "false"
+      }
+    }
+  }
+}
+```
+
+## Manual end-to-end check (with a running SiYuan)
+
+```bash
+npx @modelcontextprotocol/inspector node dist/index.js
+```
+
+Then exercise: `siyuan_health` → `siyuan_list_notebooks` → `siyuan_list_docs` → `siyuan_search_notes` (keyword + regex) → `siyuan_read_doc` → `siyuan_get_doc_outline` / `siyuan_get_backlinks` → write chain (`siyuan_create_doc` → `siyuan_append_block` → `siyuan_batch_update_blocks` → `siyuan_search_notes` confirms it's indexed → `siyuan_delete_block` with `confirmId` → `siyuan_remove_doc` with `confirmId`) → daily-note chain (`siyuan_create_daily_note` → `siyuan_append_daily_note_block`) → verify `siyuan_sql_query` rejects `DELETE FROM blocks`.
+
+## Development
+
+```
+src/
+  index.ts            # assemble server, register tools, connect stdio
+  config.ts           # env parsing & validation
+  client.ts           # SiYuanClient: auth, errors, flushTransaction
+  types.ts            # SiYuan data structures
+  schemas.ts          # shared Zod schemas
+  format.ts           # ID validation, response shaping, escaping, truncation
+  tooling.ts          # tool registration helpers and annotations
+  resources.ts        # MCP resource templates
+  tools/              # one module per tool group
+test/                 # node --test unit + tool contract suite (runs against dist/)
+evaluation/           # mcp-builder evaluation suite
+```
+
+## License
+
+MIT
