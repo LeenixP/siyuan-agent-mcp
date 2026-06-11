@@ -383,6 +383,19 @@ export function splitMarkdownForBlockUpdate(markdown: string): MarkdownBlockSpli
   };
 }
 
+export function splitMarkdownBlocks(markdown: string): string[] {
+  const blocks: string[] = [];
+  let remaining = markdown;
+  while (true) {
+    const split = splitMarkdownForBlockUpdate(remaining);
+    if (!split.firstBlock) break;
+    blocks.push(split.firstBlock);
+    if (!split.remainingBlocks) break;
+    remaining = split.remainingBlocks;
+  }
+  return blocks;
+}
+
 /**
  * Build a tool response that carries both a human/text view and machine-readable
  * structured content (the latter is validated against the tool's outputSchema).

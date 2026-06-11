@@ -7,7 +7,7 @@
 
 面向 [SiYuan 笔记](https://github.com/siyuan-note/siyuan) 的高质量 MCP Server。它让 Claude Code、OpenCode、Cursor 等 MCP 客户端通过 SiYuan HTTP Kernel API 安全地读取、搜索、写入和整理你的本地笔记工作空间。
 
-[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.2.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
+[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.3.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
 ## 你可以用它做什么
 

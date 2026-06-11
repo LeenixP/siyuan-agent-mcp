@@ -281,11 +281,13 @@ test("siyuan_batch_update_blocks expands multi-block replacements without batchU
   const server = new McpServer({ name: "test", version: "1.0.0" });
   const blockId = "20240101010101-abcdef0";
   const docId = "20240101010100-docroot";
-  const insertedId = "20240101010102-abcdef1";
+  const firstInsertedId = "20240101010102-abcdef1";
+  const secondInsertedId = "20240101010103-abcdef2";
   const client = new FakeClient([
     { rootID: docId },
     [{ doOperations: [{ id: blockId, action: "update" }] }],
-    [{ doOperations: [{ id: insertedId, action: "insert" }] }],
+    [{ doOperations: [{ id: firstInsertedId, action: "insert" }] }],
+    [{ doOperations: [{ id: secondInsertedId, action: "insert" }] }],
   ]);
   registerBlockTools(server, client, options);
 
@@ -297,8 +299,17 @@ test("siyuan_batch_update_blocks expands multi-block replacements without batchU
   assert.equal(client.calls[1].endpoint, "/api/block/updateBlock");
   assert.equal(client.calls[1].body.data, "First");
   assert.equal(client.calls[2].endpoint, "/api/block/insertBlock");
-  assert.equal(client.calls[2].body.data, "Second\n\nThird");
-  assert.equal(client.calls[3].endpoint, "/api/sqlite/flushTransaction");
-  assert.deepEqual(result.structuredContent.insertedBlockIds, [insertedId]);
+  assert.equal(client.calls[2].body.data, "Second");
+  assert.equal(client.calls[2].body.previousID, blockId);
+  assert.equal(client.calls[3].endpoint, "/api/block/insertBlock");
+  assert.equal(client.calls[3].body.data, "Third");
+  assert.equal(client.calls[3].body.previousID, firstInsertedId);
+  assert.equal(client.calls[4].endpoint, "/api/sqlite/flushTransaction");
+  assert.deepEqual(result.structuredContent.insertedBlockIds, [firstInsertedId, secondInsertedId]);
+  assert.deepEqual(result.structuredContent.operationIds, [
+    blockId,
+    firstInsertedId,
+    secondInsertedId,
+  ]);
   assert.equal(result.structuredContent.expanded, true);
 });

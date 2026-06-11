@@ -9,6 +9,7 @@ import {
   truncateWithInfo,
   truncationInfo,
   normalizeMarkdownInput,
+  splitMarkdownBlocks,
   splitMarkdownForBlockUpdate,
   pickBlockFields,
   operationIdsFromTransactions,
@@ -81,6 +82,14 @@ test("splitMarkdownForBlockUpdate separates multiple paragraph blocks", () => {
     firstBlock: "First",
     remainingBlocks: "Second\n\nThird",
   });
+});
+
+test("splitMarkdownBlocks returns every top-level Markdown block in order", () => {
+  assert.deepEqual(splitMarkdownBlocks("## Title\n\nFirst paragraph\n\nSecond paragraph"), [
+    "## Title",
+    "First paragraph",
+    "Second paragraph",
+  ]);
 });
 
 test("splitMarkdownForBlockUpdate keeps one Markdown list as the first block", () => {

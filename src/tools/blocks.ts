@@ -8,6 +8,7 @@ import {
   normalizeMarkdownInput,
   operationIdsFromTransactions,
   requireConfirmId,
+  splitMarkdownBlocks,
   splitMarkdownForBlockUpdate,
   toolError,
   toolResult,
@@ -72,16 +73,24 @@ async function updateBlockMarkdown(
   const insertedBlockIds: string[] = [];
 
   if (remainingBlocks) {
-    const insertData = await client.request<unknown>("/api/block/insertBlock", {
-      dataType: "markdown",
-      data: remainingBlocks,
-      previousID: blockId,
-      nextID: "",
-      parentID: "",
-    });
-    const insertedIds = operationIdsFromTransactions(insertData);
-    insertedBlockIds.push(...insertedIds);
-    operationIds.push(...insertedIds);
+    let previousID = blockId;
+    for (const blockMarkdown of splitMarkdownBlocks(remainingBlocks)) {
+      const insertData = await client.request<unknown>("/api/block/insertBlock", {
+        dataType: "markdown",
+        data: blockMarkdown,
+        previousID,
+        nextID: "",
+        parentID: "",
+      });
+      const insertedIds = operationIdsFromTransactions(insertData);
+      const lastInsertedId = insertedIds.at(-1);
+      if (!lastInsertedId) {
+        throw new Error("SiYuan did not return an inserted block ID for expanded Markdown.");
+      }
+      insertedBlockIds.push(...insertedIds);
+      operationIds.push(...insertedIds);
+      previousID = lastInsertedId;
+    }
   }
 
   return {
