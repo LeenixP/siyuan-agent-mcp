@@ -1,24 +1,159 @@
 # siyuan-agent-mcp
 
-面向 [SiYuan 笔记](https://github.com/siyuan-note/siyuan) 的 MCP Server，让 Claude Code、OpenCode、Cursor 等 MCP 客户端可以通过 SiYuan HTTP API 读取、搜索、写入和整理笔记。
+[![npm version](https://img.shields.io/npm/v/siyuan-agent-mcp.svg)](https://www.npmjs.com/package/siyuan-agent-mcp)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D18-339933)](https://nodejs.org/)
+[![MCP](https://img.shields.io/badge/MCP-Server-4f46e5)](https://modelcontextprotocol.io/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 
-English documentation: [README_EN.md](./README_EN.md)
+面向 [SiYuan 笔记](https://github.com/siyuan-note/siyuan) 的高质量 MCP Server。它让 Claude Code、OpenCode、Cursor 等 MCP 客户端通过 SiYuan HTTP Kernel API 安全地读取、搜索、写入和整理你的本地笔记工作空间。
 
-当前版本 3.1.1 聚焦生产级 MCP 使用体验：`siyuan_*` 工具命名、可选旧版别名、只读模式、受限 SQL、类型化结构输出、MCP 资源链接、更安全的写入确认、日记工作流、批量编辑、资产检查，以及对 SiYuan 原生导航、搜索、统计接口的更完整覆盖。
+[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.1.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
-## 环境要求
+## 你可以用它做什么
 
-- Node.js >= 18
-- SiYuan 笔记正在运行，并启用 Kernel HTTP API
-- SiYuan API token，可在 SiYuan 的 设置 -> 关于 -> API token 中获取
+| 场景 | 可以交给 MCP 客户端完成 |
+|---|---|
+| 搜索和问答 | 按关键词、查询语法或正则搜索笔记，读取文档、块、大纲、反链和上下文 |
+| 整理知识库 | 批量移动文档、重命名文档、检查失效引用、发现未使用或缺失资产 |
+| 写入和修订 | 创建文档、追加块、更新块、批量插入、批量更新，并在写入后立即刷新索引 |
+| 日记和 inbox | 自动创建当天日记，将临时想法、会议纪要、任务或阅读摘录追加到日记 |
+| 安全分析 | 使用受限 SQL 或结构化 blocks 查询做只读分析，默认限制结果规模和危险语句 |
+| 受控接入 | 只读模式、危险工具默认隐藏、删除操作强制确认，适合长期挂在 MCP 客户端里使用 |
 
-## 安装与构建
+## 5 分钟接入
+
+### 1. 准备 SiYuan
+
+先确认 SiYuan 正在运行，然后在 SiYuan 中复制 API token：
+
+```text
+设置 -> 关于 -> API token
+```
+
+用 token 验证本机可以访问 Kernel API：
 
 ```bash
-npm install
-npm run build
-npm test      # 运行单元测试套件
+export SIYUAN_API_TOKEN="your-api-token-here"
+curl -H "Authorization: Token $SIYUAN_API_TOKEN" http://127.0.0.1:6806/api/system/version
 ```
+
+如果你只是第一次试用，建议先设置 `SIYUAN_READ_ONLY=true`，确认连接和搜索正常后再打开写权限。
+
+### 2. 配置 MCP 客户端
+
+多数用户不需要克隆本仓库，直接让客户端通过 `npx` 启动即可。
+
+<details open>
+<summary><strong>Claude Code</strong></summary>
+
+添加到 `~/.claude/settings.json`，或项目级 `.claude/settings.local.json`：
+
+```json
+{
+  "mcpServers": {
+    "siyuan": {
+      "command": "npx",
+      "args": ["-y", "siyuan-agent-mcp"],
+      "env": {
+        "SIYUAN_API_URL": "http://127.0.0.1:6806",
+        "SIYUAN_API_TOKEN": "your-api-token-here",
+        "SIYUAN_READ_ONLY": "true"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>OpenCode</strong></summary>
+
+添加到 `opencode.json` 的 `mcp` 字段下：
+
+```json
+{
+  "mcp": {
+    "siyuan": {
+      "type": "local",
+      "enabled": true,
+      "command": ["npx", "-y", "siyuan-agent-mcp"],
+      "environment": {
+        "SIYUAN_API_URL": "http://127.0.0.1:6806",
+        "SIYUAN_API_TOKEN": "your-api-token-here",
+        "SIYUAN_READ_ONLY": "true"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Cursor</strong></summary>
+
+添加到 `~/.cursor/mcp.json`：
+
+```json
+{
+  "mcpServers": {
+    "siyuan": {
+      "command": "npx",
+      "args": ["-y", "siyuan-agent-mcp"],
+      "env": {
+        "SIYUAN_API_URL": "http://127.0.0.1:6806",
+        "SIYUAN_API_TOKEN": "your-api-token-here",
+        "SIYUAN_READ_ONLY": "true"
+      }
+    }
+  }
+}
+```
+
+</details>
+
+### 3. 第一次验证
+
+重启或刷新 MCP 客户端后，按这个顺序调用工具：
+
+| 步骤 | 工具 | 期望结果 |
+|---|---|---|
+| 1 | `siyuan_health` | 返回 Kernel 版本、模式、启动进度和笔记本可访问状态 |
+| 2 | `siyuan_list_notebooks` | 能看到已打开的笔记本 ID 和名称 |
+| 3 | `siyuan_search_notes` | 能按关键词搜到已有笔记 |
+| 4 | `siyuan_read_workspace_overview` | 返回最近文档和最近更新块 |
+
+验证读能力正常后，如果需要写入，把配置里的 `SIYUAN_READ_ONLY` 改为 `false` 并重启客户端。
+
+## 常用任务速查
+
+| 你想做的事 | 推荐工具组合 |
+|---|---|
+| 找一篇笔记 | `siyuan_search_notes` -> `siyuan_read_doc` |
+| 了解一篇文档结构 | `siyuan_get_doc_outline` -> `siyuan_get_backlinks` -> `siyuan_get_doc_assets` |
+| 围绕某个块继续阅读 | `siyuan_get_block` -> `siyuan_get_block_breadcrumb` -> `siyuan_get_child_blocks` |
+| 创建结构化文档 | `siyuan_create_doc`，传入多行 Markdown |
+| 在文档末尾追加内容 | `siyuan_append_block` |
+| 批量插入多段内容 | `siyuan_batch_insert_blocks` |
+| 修订一段内容 | `siyuan_update_block` 或 `siyuan_batch_update_blocks` |
+| 删除内容 | `siyuan_delete_block` 或 `siyuan_remove_doc`，必须提供匹配的 `confirmId` |
+| 记录到当天日记 | `siyuan_append_daily_note_block` |
+| 查标签、书签和资产 | `siyuan_list_tags`、`siyuan_list_bookmarks`、`siyuan_search_assets` |
+| 做只读统计分析 | 优先 `siyuan_query_blocks`，高级场景再用 `siyuan_sql_query` |
+
+## 关键设计
+
+| 设计点 | 说明 |
+|---|---|
+| MCP 友好的工具命名 | v3 起所有工具使用 `siyuan_*` 前缀，避免和其他 MCP Server 冲突 |
+| 结构化输出 | 工具返回文本摘要和 typed structured content，方便客户端稳定解析 |
+| 写入后可读 | 写入工具返回前会刷新 SiYuan transaction，减少“刚写完搜不到”的问题 |
+| Markdown 保护 | 写入工具会把字面量 `\n` 转成真实换行，避免多行 Markdown 被当作单行文本 |
+| 只读优先 | `SIYUAN_READ_ONLY=true` 会从工具列表中移除所有写入和状态变更工具 |
+| 危险工具隐藏 | 删除笔记本等高风险工具默认不暴露，需要显式开启 |
+| 删除强确认 | 删除块、删除文档、删除笔记本都需要匹配的确认参数 |
+| SQL 有边界 | 只允许单条 `SELECT`，必须带数字 `LIMIT <= 1000`，并拒绝写入和 DDL 关键字 |
 
 ## 环境变量
 
@@ -34,9 +169,22 @@ npm test      # 运行单元测试套件
 | `SIYUAN_ENABLE_SQL` | `true` | 设为 `false` 时隐藏原始 SQL 查询工具 |
 | `SIYUAN_ENABLE_DANGEROUS_TOOLS` | `false` | 设为 `true` 时暴露额外高风险工具，如删除笔记本 |
 
-## 工具能力
+## MCP 资源
 
-### 导航与搜索
+Server 注册了以下 URI 模板，客户端可以直接获取上下文：
+
+| 资源 URI | 内容 |
+|---|---|
+| `siyuan://doc/{id}` | 文档 Markdown |
+| `siyuan://block/{id}` | 块 kramdown |
+| `siyuan://notebook/{id}` | 笔记本 JSON 元数据 |
+
+## 工具目录
+
+日常使用时优先看上面的“常用任务速查”。下面是完整工具清单，便于做客户端能力审计或排查。
+
+<details>
+<summary><strong>导航与搜索</strong></summary>
 
 | 工具 | 说明 |
 |---|---|
@@ -50,7 +198,10 @@ npm test      # 运行单元测试套件
 | `siyuan_query_blocks` | 对 `blocks` 索引执行类型化、受限查询 |
 | `siyuan_sql_query` | 受限只读 SELECT 查询；必须带数字 `LIMIT <= 1000` |
 
-### 读取
+</details>
+
+<details>
+<summary><strong>读取与上下文</strong></summary>
 
 | 工具 | 说明 |
 |---|---|
@@ -74,7 +225,10 @@ npm test      # 运行单元测试套件
 | `siyuan_get_blocks_word_count` | 读取块字数统计 |
 | `siyuan_read_workspace_overview` | 读取紧凑的工作区概览 |
 
-### 知识发现
+</details>
+
+<details>
+<summary><strong>知识发现与资产</strong></summary>
 
 | 工具 | 说明 |
 |---|---|
@@ -90,7 +244,10 @@ npm test      # 运行单元测试套件
 | `siyuan_get_asset_content` | 读取单个资产的已索引内容 |
 | `siyuan_list_invalid_refs` | 查找失效块引用 |
 
-### 文档管理
+</details>
+
+<details>
+<summary><strong>文档管理</strong></summary>
 
 | 工具 | 说明 |
 |---|---|
@@ -103,7 +260,10 @@ npm test      # 运行单元测试套件
 | `siyuan_move_docs` | 将文档移动到父文档下或笔记本根目录 |
 | `siyuan_remove_doc` | 删除文档及其子文档；必须提供 `confirmId` |
 
-### 块编辑
+</details>
+
+<details>
+<summary><strong>块编辑</strong></summary>
 
 | 工具 | 说明 |
 |---|---|
@@ -116,7 +276,10 @@ npm test      # 运行单元测试套件
 | `siyuan_delete_block` | 删除块及其子块；必须提供 `confirmId` |
 | `siyuan_move_block` | 将块移动到新位置 |
 
-### 属性与笔记本
+</details>
+
+<details>
+<summary><strong>属性与笔记本</strong></summary>
 
 | 工具 | 说明 |
 |---|---|
@@ -132,110 +295,35 @@ npm test      # 运行单元测试套件
 | `siyuan_close_notebook` | 关闭或卸载笔记本 |
 | `siyuan_remove_notebook` | 删除笔记本；默认隐藏，只有 `SIYUAN_ENABLE_DANGEROUS_TOOLS=true` 时暴露，并且必须提供 `confirmId` 和 `confirmText` |
 
-## MCP 资源
-
-Server 注册了以下 URI 模板，客户端可以直接获取上下文：
-
-| 资源 URI | 内容 |
-|---|---|
-| `siyuan://doc/{id}` | 文档 Markdown |
-| `siyuan://block/{id}` | 块 kramdown |
-| `siyuan://notebook/{id}` | 笔记本 JSON 元数据 |
+</details>
 
 ## 推荐工作流
 
-这些工具可以组合使用。典型流程如下：
+```text
+定位笔记
+  -> siyuan_list_notebooks / siyuan_list_docs / siyuan_search_notes
 
-1. **定位**：使用 `siyuan_list_notebooks`、`siyuan_list_docs` 或 `siyuan_search_notes`。
-2. **理解上下文**：使用 `siyuan_get_doc_outline`、`siyuan_get_backlinks`、`siyuan_get_block_breadcrumb`。
-3. **读取**：使用 `siyuan_read_doc`、`siyuan_get_block`、`siyuan_batch_get_blocks` 或 MCP 资源。
-4. **编辑**：简单追加用 `siyuan_append_block` 或 `siyuan_prepend_block`，精确位置用 `siyuan_insert_block`，多块变更用批量工具，修订内容用 `siyuan_update_block`，重组内容用 `siyuan_move_block` 或 `siyuan_move_docs`。
-5. **分析**：优先使用 `siyuan_query_blocks`；只有高级只读查询场景才使用 `siyuan_sql_query`。
-6. **记录**：日记和 inbox 场景使用 `siyuan_create_daily_note` 或 daily-note 块工具。
+理解上下文
+  -> siyuan_get_doc_outline / siyuan_get_backlinks / siyuan_get_block_breadcrumb
 
-补充说明：
+读取内容
+  -> siyuan_read_doc / siyuan_get_block / siyuan_batch_get_blocks / MCP resources
 
-- 写入工具返回前会刷新 SiYuan transaction，因此写入后的读取和搜索能看到新数据。
-- Markdown 写入工具会在输入没有真实换行时，将 `\n` 这类字面转义转换成真实换行，避免多行 Markdown 被 SiYuan 当成单行文本解析。
+编辑整理
+  -> siyuan_append_block / siyuan_insert_block / siyuan_update_block / batch tools / move tools
+
+分析和归档
+  -> siyuan_query_blocks / siyuan_sql_query / daily-note tools
+```
+
+重要行为：
+
 - `siyuan_create_doc` 在目标可读路径已存在时不会创建同名重复文档，而是返回已有文档 ID，并设置 `existed=true`、`created=false`。
 - `siyuan_insert_block` 必须且只能提供一个锚点：`previousID`、`nextID` 或 `parentID`。
 - `siyuan_batch_insert_blocks` 对同一个 `parentID` 的 parentID-only 批量插入会在发送给 SiYuan 前反向提交，从而让最终文档顺序与输入顺序一致。
 - `siyuan_remove_doc` 和 `siyuan_delete_block` 必须提供与目标 ID 相同的 `confirmId`。
 - `siyuan_remove_notebook` 默认隐藏；启用需要 `SIYUAN_ENABLE_DANGEROUS_TOOLS=true`，每次调用还必须提供 `confirmId` 和精确 `confirmText`。
 - 只有已打开笔记本中的文档会被搜索索引覆盖。
-
-## 安全策略
-
-- `siyuan_read_doc` 和 `siyuan_get_block` 会截断超大内容，并返回截断元数据。
-- `siyuan_sql_query` 强制只读，必须带数字 `LIMIT <= 1000`，并拒绝多语句和字符串字面量之外的写入关键字。
-- 破坏性工具必须提供显式 `confirmId`，并标记 `destructiveHint`。
-- `SIYUAN_READ_ONLY=true` 会从暴露的 MCP 工具列表中移除所有写入和状态变更工具。
-- `SIYUAN_ENABLE_DANGEROUS_TOOLS=false` 会将删除笔记本等高风险工具从暴露的 MCP 工具列表中隐藏。
-- 客户端会限制发往 Kernel 的并发请求，并在 SiYuan 报告索引中时自动重试一次。
-- 远程非 HTTPS 的 `SIYUAN_API_URL` 会输出明文 token 风险警告，日志会隐藏 URL 中嵌入的凭据。
-
-## 客户端配置示例
-
-### Claude Code
-
-添加到 `~/.claude/settings.json` 或项目级 `.claude/settings.local.json`：
-
-```json
-{
-  "mcpServers": {
-    "siyuan": {
-      "command": "npx",
-      "args": ["-y", "siyuan-agent-mcp"],
-      "env": {
-        "SIYUAN_API_URL": "http://127.0.0.1:6806",
-        "SIYUAN_API_TOKEN": "your-api-token-here",
-        "SIYUAN_READ_ONLY": "false"
-      }
-    }
-  }
-}
-```
-
-### OpenCode
-
-添加到 `opencode.json` 的 `mcp` 字段下：
-
-```json
-{
-  "mcp": {
-    "siyuan": {
-      "type": "local",
-      "enabled": true,
-      "command": ["npx", "-y", "siyuan-agent-mcp"],
-      "environment": {
-        "SIYUAN_API_URL": "http://127.0.0.1:6806",
-        "SIYUAN_API_TOKEN": "your-api-token-here",
-        "SIYUAN_READ_ONLY": "false"
-      }
-    }
-  }
-}
-```
-
-### Cursor
-
-添加到 `~/.cursor/mcp.json`：
-
-```json
-{
-  "mcpServers": {
-    "siyuan": {
-      "command": "npx",
-      "args": ["-y", "siyuan-agent-mcp"],
-      "env": {
-        "SIYUAN_API_URL": "http://127.0.0.1:6806",
-        "SIYUAN_API_TOKEN": "your-api-token-here",
-        "SIYUAN_READ_ONLY": "false"
-      }
-    }
-  }
-}
-```
 
 ## 手工端到端检查
 
@@ -247,9 +335,57 @@ npx @modelcontextprotocol/inspector node dist/index.js
 
 建议按以下链路验证：
 
-`siyuan_health` -> `siyuan_list_notebooks` -> `siyuan_list_docs` -> `siyuan_search_notes`（关键词和正则）-> `siyuan_read_doc` -> `siyuan_get_doc_outline` / `siyuan_get_backlinks` -> 写入链路（`siyuan_create_doc` -> `siyuan_append_block` -> `siyuan_batch_update_blocks` -> `siyuan_search_notes` 确认已索引 -> 带 `confirmId` 调用 `siyuan_delete_block` -> 带 `confirmId` 调用 `siyuan_remove_doc`）-> 日记链路（`siyuan_create_daily_note` -> `siyuan_append_daily_note_block`）-> 验证 `siyuan_sql_query` 会拒绝 `DELETE FROM blocks`。
+```text
+siyuan_health
+  -> siyuan_list_notebooks
+  -> siyuan_list_docs
+  -> siyuan_search_notes
+  -> siyuan_read_doc
+  -> siyuan_get_doc_outline / siyuan_get_backlinks
+  -> siyuan_create_doc
+  -> siyuan_append_block
+  -> siyuan_batch_update_blocks
+  -> siyuan_search_notes 确认已索引
+  -> siyuan_delete_block with confirmId
+  -> siyuan_remove_doc with confirmId
+  -> siyuan_create_daily_note
+  -> siyuan_append_daily_note_block
+  -> siyuan_sql_query 拒绝 DELETE FROM blocks
+```
 
-## 开发结构
+## 常见问题
+
+### `siyuan_health` 连接失败
+
+先确认 SiYuan 正在运行，`SIYUAN_API_URL` 指向 Kernel API 地址，而不是普通网页地址。默认本机地址通常是 `http://127.0.0.1:6806`。
+
+### 客户端看不到写入工具
+
+检查 `SIYUAN_READ_ONLY` 是否为 `true`。只读模式会直接移除所有写入和状态变更工具。
+
+### 搜索不到刚写入的内容
+
+写入工具会刷新 transaction，但 SiYuan 索引仍可能短暂延迟。服务端默认会在索引中状态下等待 `SIYUAN_RETRY_INDEXING_MS` 后自动重试一次。
+
+### SQL 被拒绝
+
+`siyuan_sql_query` 只允许只读 `SELECT`，必须带数字 `LIMIT <= 1000`。写入、DDL、多语句或超大查询都会被拒绝。
+
+### 删除工具调用失败
+
+删除文档和块时，`confirmId` 必须和目标 ID 完全一致。删除笔记本还需要开启 `SIYUAN_ENABLE_DANGEROUS_TOOLS=true`，并提供精确的 `confirmText`。
+
+## 本地开发
+
+克隆仓库后执行：
+
+```bash
+npm install
+npm run build
+npm test
+```
+
+项目结构：
 
 ```text
 src/
