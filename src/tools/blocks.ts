@@ -453,11 +453,12 @@ export function registerBlockTools(
         if (!previousID && !parentID) {
           throw new Error("Provide previousID and/or parentID to anchor the move.");
         }
-        const data = await client.request<unknown>("/api/block/moveBlock", {
-          id: blockId,
-          previousID: previousID ?? "",
-          parentID: parentID ?? "",
-        });
+        // moveBlock validates present anchor fields even when they are empty strings.
+        const body: Record<string, string> = { id: blockId };
+        if (previousID) body.previousID = previousID;
+        if (parentID) body.parentID = parentID;
+
+        const data = await client.request<unknown>("/api/block/moveBlock", body);
         await client.flushTransaction();
         return toolResult({ moved: blockId, operationIds: operationIdsFromTransactions(data) });
       } catch (err) {

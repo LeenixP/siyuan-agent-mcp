@@ -313,3 +313,55 @@ test("siyuan_batch_update_blocks expands multi-block replacements without batchU
   ]);
   assert.equal(result.structuredContent.expanded, true);
 });
+
+test("siyuan_move_block omits absent anchors for parentID-only moves", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const blockId = "20240101010101-abcdef0";
+  const parentID = "20240101010100-docroot";
+  const client = new FakeClient([
+    [{ doOperations: [{ id: blockId, action: "move" }] }],
+  ]);
+  registerBlockTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_move_block.handler({
+    blockId,
+    parentID,
+  });
+
+  assert.deepEqual(client.calls, [
+    {
+      endpoint: "/api/block/moveBlock",
+      body: {
+        id: blockId,
+        parentID,
+      },
+    },
+    { endpoint: "/api/sqlite/flushTransaction", body: undefined },
+  ]);
+  assert.equal(result.structuredContent.moved, blockId);
+  assert.deepEqual(result.structuredContent.operationIds, [blockId]);
+});
+
+test("siyuan_move_block omits absent anchors for previousID-only moves", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const blockId = "20240101010101-abcdef0";
+  const previousID = "20240101010100-previous";
+  const client = new FakeClient([
+    [{ doOperations: [{ id: blockId, action: "move" }] }],
+  ]);
+  registerBlockTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_move_block.handler({
+    blockId,
+    previousID,
+  });
+
+  assert.deepEqual(client.calls[0], {
+    endpoint: "/api/block/moveBlock",
+    body: {
+      id: blockId,
+      previousID,
+    },
+  });
+  assert.equal(result.structuredContent.moved, blockId);
+});

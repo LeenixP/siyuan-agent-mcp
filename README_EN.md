@@ -7,7 +7,7 @@
 
 A high-quality MCP Server for [SiYuan Note](https://github.com/siyuan-note/siyuan). It lets MCP clients such as Claude Code, OpenCode, and Cursor safely read, search, write, and reorganize your local SiYuan workspace through the SiYuan HTTP Kernel API.
 
-[中文文档](./README.md) · [Release notes](./releases/v3.1.3.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
+[中文文档](./README.md) · [Release notes](./releases/v3.1.4.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
 ## What Can It Do
 
