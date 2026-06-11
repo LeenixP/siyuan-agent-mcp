@@ -1,6 +1,6 @@
 {
   "name": "siyuan-agent-mcp",
-  "version": "3.1.0",
+  "version": "3.1.1",
   "description": "MCP server for SiYuan Note — enables AI clients to read/write notes via SiYuan HTTP API",
   "type": "module",
   "bin": {

@@ -57,12 +57,12 @@ test("siyuan_search_asset_content uses SiYuan asset-content order codes", async 
   assert.equal(result.structuredContent.count, 0);
 });
 
-test("siyuan_create_doc sends parentID and explicit id, and reports existing docs", async () => {
+test("siyuan_create_doc creates with normalized markdown, parentID, and explicit id", async () => {
   const server = new McpServer({ name: "test", version: "1.0.0" });
   const docId = "20240101010101-abcdef0";
   const parentDocId = "20231224160424-2f5680o";
   const notebookId = "20210817205410-2kvfpfn";
-  const client = new FakeClient(["/Parent", [docId], docId]);
+  const client = new FakeClient(["/Parent", [], docId]);
   registerDocTools(server, client, options);
 
   const result = await server._registeredTools.siyuan_create_doc.handler({
@@ -70,7 +70,7 @@ test("siyuan_create_doc sends parentID and explicit id, and reports existing doc
     title: "Child",
     parentDocId,
     docId,
-    markdown: "",
+    markdown: "# Heading\\n\\nBody",
   });
 
   assert.deepEqual(client.calls.slice(0, 3), [
@@ -81,14 +81,37 @@ test("siyuan_create_doc sends parentID and explicit id, and reports existing doc
       body: {
         notebook: notebookId,
         path: "/Parent/Child",
-        markdown: "",
+        markdown: "# Heading\n\nBody",
         parentID: parentDocId,
         id: docId,
       },
     },
   ]);
   assert.equal(result.structuredContent.createdDocId, docId);
+  assert.equal(result.structuredContent.existed, false);
+  assert.equal(result.structuredContent.created, true);
+});
+
+test("siyuan_create_doc returns existing same-path document without creating duplicates", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const docId = "20240101010101-abcdef0";
+  const notebookId = "20210817205410-2kvfpfn";
+  const client = new FakeClient([[docId]]);
+  registerDocTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_create_doc.handler({
+    notebookId,
+    title: "Existing",
+    markdown: "# New content that should not create a duplicate",
+  });
+
+  assert.deepEqual(client.calls, [
+    { endpoint: "/api/filetree/getIDsByHPath", body: { notebook: notebookId, path: "/Existing" } },
+  ]);
+  assert.equal(result.structuredContent.createdDocId, docId);
+  assert.equal(result.structuredContent.path, "/Existing");
   assert.equal(result.structuredContent.existed, true);
+  assert.equal(result.structuredContent.created, false);
 });
 
 test("siyuan_batch_insert_blocks maps anchors and returns transaction IDs", async () => {
@@ -117,5 +140,25 @@ test("siyuan_batch_insert_blocks maps anchors and returns transaction IDs", asyn
     ],
   });
   assert.deepEqual(result.structuredContent.insertedBlockIds, [insertedID]);
+  assert.equal(result.structuredContent.orderAdjusted, false);
   assert.equal(client.calls[1].endpoint, "/api/sqlite/flushTransaction");
+});
+
+test("siyuan_batch_insert_blocks reverses same-parent inserts to preserve final order", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const parentID = "20210817205410-2kvfpfn";
+  const client = new FakeClient([
+    [{ doOperations: [{ id: "20240101010101-abcdef0" }, { id: "20240101010102-abcdef1" }] }],
+  ]);
+  registerBlockTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_batch_insert_blocks.handler({
+    blocks: [
+      { parentID, markdown: "first" },
+      { parentID, markdown: "second" },
+    ],
+  });
+
+  assert.deepEqual(client.calls[0].body.blocks.map((block) => block.data), ["second", "first"]);
+  assert.equal(result.structuredContent.orderAdjusted, true);
 });

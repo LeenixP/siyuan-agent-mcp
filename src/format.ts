@@ -58,6 +58,21 @@ export function truncationInfo(text: string, max = MAX_CONTENT_LENGTH): Truncati
   return truncateWithInfo(text, max).truncation;
 }
 
+/**
+ * Some MCP clients or model-generated calls pass Markdown with escaped newline
+ * sequences as literal "\\n" text. SiYuan's Markdown parser needs real line
+ * breaks to split headings, paragraphs, and lists into separate blocks.
+ */
+export function normalizeMarkdownInput(markdown: string): string {
+  if (markdown.includes("\n") || markdown.includes("\r")) return markdown;
+  if (!/\\[nrt]/.test(markdown)) return markdown;
+  return markdown
+    .replace(/\\r\\n/g, "\n")
+    .replace(/\\n/g, "\n")
+    .replace(/\\r/g, "\n")
+    .replace(/\\t/g, "\t");
+}
+
 /** Keep only the fields agents care about, dropping internal hashes and paths. */
 export function pickBlockFields(b: SiYuanBlock) {
   return {

@@ -24,7 +24,7 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "siyuan-agent-mcp",
-    version: "3.1.0",
+    version: "3.1.1",
   });
 
   const registrationOptions: ToolRegistrationOptions = {

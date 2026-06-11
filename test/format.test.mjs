@@ -8,6 +8,7 @@ import {
   truncate,
   truncateWithInfo,
   truncationInfo,
+  normalizeMarkdownInput,
   pickBlockFields,
   operationIdsFromTransactions,
   toolResult,
@@ -59,6 +60,12 @@ test("truncateWithInfo returns consistent text and metadata", () => {
     originalLength: 3,
     returnedLength: 3,
   });
+});
+
+test("normalizeMarkdownInput converts literal escaped newlines only when needed", () => {
+  assert.equal(normalizeMarkdownInput("# Title\\n\\nBody"), "# Title\n\nBody");
+  assert.equal(normalizeMarkdownInput("# Title\n\\nBody"), "# Title\n\\nBody");
+  assert.equal(normalizeMarkdownInput("plain text"), "plain text");
 });
 
 test("pickBlockFields keeps the expected fields only", () => {

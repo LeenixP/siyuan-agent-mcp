@@ -2,7 +2,7 @@
 
 MCP server for [SiYuan Note](https://github.com/siyuan-note/siyuan) — enables AI clients (Claude Code, OpenCode, Cursor, …) to read, search, write, and reorganize notes through SiYuan's HTTP API.
 
-Version 3.1 focuses on production-grade MCP ergonomics: `siyuan_*` tool names, optional legacy aliases, read-only mode, bounded SQL, typed structured outputs, resource links, safer write confirmations, daily-note workflows, batch editing, asset inspection, and broader coverage of SiYuan's native navigation/search/stat APIs.
+Version 3.1.1 focuses on production-grade MCP ergonomics: `siyuan_*` tool names, optional legacy aliases, read-only mode, bounded SQL, typed structured outputs, resource links, safer write confirmations, daily-note workflows, batch editing, asset inspection, and broader coverage of SiYuan's native navigation/search/stat APIs.
 
 ## Requirements
 
@@ -88,7 +88,7 @@ npm test      # runs the unit suite
 ### Document management
 | Tool | Description |
 |---|---|
-| `siyuan_create_doc` | Create a document (optionally nested, with initial Markdown) |
+| `siyuan_create_doc` | Create a document (optionally nested, with initial Markdown); same path returns the existing document |
 | `siyuan_create_daily_note` | Create/open today's daily note in a notebook |
 | `siyuan_append_daily_note_block` | Create/open today's daily note and append a block |
 | `siyuan_prepend_daily_note_block` | Create/open today's daily note and prepend a block |
@@ -103,7 +103,7 @@ npm test      # runs the unit suite
 | `siyuan_insert_block` | Insert a Markdown block at a precise position |
 | `siyuan_append_block` | Append a block as the last child of a parent |
 | `siyuan_prepend_block` | Prepend a block as the first child of a parent |
-| `siyuan_batch_insert_blocks` | Insert up to 50 Markdown blocks in one batch |
+| `siyuan_batch_insert_blocks` | Insert up to 50 Markdown blocks in one batch; same-parent inserts preserve input order |
 | `siyuan_update_block` | Replace a block's content with new Markdown |
 | `siyuan_batch_update_blocks` | Replace up to 50 blocks in one batch |
 | `siyuan_delete_block` | Delete a block and its children; requires `confirmId` |
@@ -147,7 +147,10 @@ The tools are designed to compose. A typical agent flow:
 
 Notes:
 - Write tools flush SiYuan's transaction before returning, so reads/search immediately after a write see the new data.
+- Markdown write tools normalize literal escaped line breaks such as `\n` into real line breaks when the input has no real newlines.
+- `siyuan_create_doc` does not create a duplicate when the target human-readable path already exists; it returns the existing document ID with `existed=true` and `created=false`.
 - `siyuan_insert_block` requires exactly one anchor: `previousID`, `nextID`, or `parentID`.
+- `siyuan_batch_insert_blocks` reverses same-parent parentID-only batches before sending them to SiYuan so the final document order matches the input order.
 - `siyuan_remove_doc` and `siyuan_delete_block` require `confirmId` equal to the target ID.
 - `siyuan_remove_notebook` is hidden by default; enabling it requires `SIYUAN_ENABLE_DANGEROUS_TOOLS=true` and each call requires both `confirmId` and exact `confirmText`.
 - Only documents in **open** notebooks are indexed by search.

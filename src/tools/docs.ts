@@ -6,6 +6,7 @@ import type { SiYuanClient } from "../client.js";
 import {
   MAX_CONTENT_LENGTH,
   firstOperationIdFromTransactions,
+  normalizeMarkdownInput,
   operationIdsFromTransactions,
   requireConfirmId,
   toolError,
@@ -24,6 +25,50 @@ import {
 function warningFrom(label: string, result: PromiseSettledResult<unknown>): string | null {
   if (result.status === "fulfilled") return null;
   return `${label}: ${String(result.reason)}`;
+}
+
+interface DocStoragePath {
+  notebook: string;
+  path: string;
+}
+
+function docChildContainerPath(storagePath: string): string {
+  return storagePath.replace(/\.sy$/, "");
+}
+
+function docParentContainerPath(storagePath: string): string {
+  return storagePath.replace(/\/[^/]+\.sy$/, "");
+}
+
+async function findExistingDocId(
+  client: SiYuanClient,
+  notebookId: string,
+  hPath: string,
+  parentDocId?: string
+): Promise<string | null> {
+  const existingIds = await client.request<string[]>("/api/filetree/getIDsByHPath", {
+    notebook: notebookId,
+    path: hPath,
+  });
+  if (!existingIds?.length) return null;
+  if (!parentDocId) return existingIds[0] ?? null;
+
+  const parentStorage = await client.request<DocStoragePath>("/api/filetree/getPathByID", {
+    id: parentDocId,
+  });
+  const expectedParentPath = docChildContainerPath(parentStorage.path);
+  for (const candidateId of existingIds) {
+    const candidateStorage = await client.request<DocStoragePath>("/api/filetree/getPathByID", {
+      id: candidateId,
+    });
+    if (
+      candidateStorage.notebook === notebookId &&
+      docParentContainerPath(candidateStorage.path) === expectedParentPath
+    ) {
+      return candidateId;
+    }
+  }
+  return null;
 }
 
 export function registerDocTools(
@@ -66,6 +111,7 @@ export function registerDocTools(
           path: z.string(),
           parentDocId: z.string().nullable(),
           existed: z.boolean(),
+          created: z.boolean(),
         })
         .strict(),
       annotations: WRITE_SAFE,
@@ -88,14 +134,23 @@ export function registerDocTools(
           }
           path = `${parentHpath}/${safeTitle}`;
         }
-        const existingIds = await client.request<string[]>("/api/filetree/getIDsByHPath", {
-          notebook: notebookId,
-          path,
-        });
+        const existingDocId = await findExistingDocId(client, notebookId, path, parentDocId);
+        if (existingDocId) {
+          return toolResult({
+            createdDocId: existingDocId,
+            notebookId,
+            title,
+            path,
+            parentDocId: parentDocId ?? null,
+            existed: true,
+            created: false,
+          });
+        }
+        const normalizedMarkdown = normalizeMarkdownInput(markdown);
         const createdDocId = await client.request<string>("/api/filetree/createDocWithMd", {
           notebook: notebookId,
           path,
-          markdown,
+          markdown: normalizedMarkdown,
           ...(parentDocId ? { parentID: parentDocId } : {}),
           ...(docId ? { id: docId } : {}),
           ...(tags ? { tags } : {}),
@@ -109,7 +164,8 @@ export function registerDocTools(
           title,
           path,
           parentDocId: parentDocId ?? null,
-          existed: (existingIds ?? []).includes(createdDocId),
+          existed: false,
+          created: true,
         });
       } catch (err) {
         return toolError(`siyuan_create_doc failed: ${String(err)}`);
@@ -244,10 +300,11 @@ export function registerDocTools(
     },
     async ({ notebookId, markdown }) => {
       try {
+        const normalizedMarkdown = normalizeMarkdownInput(markdown);
         const data = await client.request<unknown>("/api/block/appendDailyNoteBlock", {
           notebook: notebookId,
           dataType: "markdown",
-          data: markdown,
+          data: normalizedMarkdown,
         });
         const insertedBlockId = firstOperationIdFromTransactions(data);
         if (!insertedBlockId) {
@@ -284,10 +341,11 @@ export function registerDocTools(
     },
     async ({ notebookId, markdown }) => {
       try {
+        const normalizedMarkdown = normalizeMarkdownInput(markdown);
         const data = await client.request<unknown>("/api/block/prependDailyNoteBlock", {
           notebook: notebookId,
           dataType: "markdown",
-          data: markdown,
+          data: normalizedMarkdown,
         });
         const insertedBlockId = firstOperationIdFromTransactions(data);
         if (!insertedBlockId) {

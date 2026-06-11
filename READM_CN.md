@@ -74,7 +74,7 @@ npm test
 
 ### 文档管理
 
-- `siyuan_create_doc`：创建文档，支持父文档、指定初始 Markdown、指定文档 ID，并返回是否已存在
+- `siyuan_create_doc`：创建文档，支持父文档、指定初始 Markdown、指定文档 ID；同路径已有文档时直接返回已有 ID
 - `siyuan_create_daily_note`：创建或打开当天日记
 - `siyuan_append_daily_note_block` / `siyuan_prepend_daily_note_block`：向当天日记追加或前置块
 - `siyuan_duplicate_doc`：复制文档
@@ -86,7 +86,7 @@ npm test
 
 - `siyuan_insert_block`：按 `previousID`、`nextID` 或 `parentID` 精确插入块
 - `siyuan_append_block` / `siyuan_prepend_block`：追加或前置块
-- `siyuan_batch_insert_blocks`：批量插入块
+- `siyuan_batch_insert_blocks`：批量插入块；同一父块下的批量插入会保持输入顺序
 - `siyuan_update_block` / `siyuan_batch_update_blocks`：更新一个或多个块
 - `siyuan_delete_block`：删除块，必须提供匹配的 `confirmId`
 - `siyuan_move_block`：移动块
@@ -117,6 +117,12 @@ npm test
 4. 编辑：简单追加用 append/prepend，精确位置用 insert，多块变更用 batch 工具，重组内容用 move 工具。
 5. 分析：优先使用 `siyuan_query_blocks`，只有高级只读场景才使用 `siyuan_sql_query`。
 6. 记录：日记和 inbox 场景使用 daily-note 工具。
+
+补充说明：
+
+- Markdown 写入工具会在输入没有真实换行时，将 `\n` 这类字面转义换成真实换行，避免多行 Markdown 被 SiYuan 当成单行文本解析。
+- `siyuan_create_doc` 在目标可读路径已存在时不会创建同名重复文档，而是返回已有文档 ID，并设置 `existed=true`、`created=false`。
+- `siyuan_batch_insert_blocks` 对同一个 `parentID` 的 parentID-only 批量插入会在发送给 SiYuan 前反向提交，从而让最终文档顺序与输入顺序一致。
 
 ## 安全策略
 

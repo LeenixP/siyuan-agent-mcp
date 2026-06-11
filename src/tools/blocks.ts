@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
 import {
   firstOperationIdFromTransactions,
+  normalizeMarkdownInput,
   operationIdsFromTransactions,
   requireConfirmId,
   toolError,
@@ -21,6 +22,20 @@ import {
 
 function countDefined(values: Array<string | undefined>): number {
   return values.filter((value) => value !== undefined && value !== "").length;
+}
+
+type BatchInsertBlock = {
+  markdown: string;
+  previousID?: string;
+  nextID?: string;
+  parentID?: string;
+};
+
+function orderBatchInsertBlocks(blocks: BatchInsertBlock[]): BatchInsertBlock[] {
+  if (blocks.length < 2) return blocks;
+  const parentOnly = blocks.every((block) => block.parentID && !block.previousID && !block.nextID);
+  const sameParent = new Set(blocks.map((block) => block.parentID)).size === 1;
+  return parentOnly && sameParent ? [...blocks].reverse() : blocks;
 }
 
 export function registerBlockTools(
@@ -59,7 +74,7 @@ export function registerBlockTools(
         }
         const data = await client.request<unknown>("/api/block/insertBlock", {
           dataType: "markdown",
-          data: markdown,
+          data: normalizeMarkdownInput(markdown),
           previousID: previousID ?? "",
           nextID: nextID ?? "",
           parentID: parentID ?? "",
@@ -111,6 +126,7 @@ export function registerBlockTools(
           count: z.number(),
           insertedBlockIds: z.array(z.string()),
           operationIds: z.array(z.string()),
+          orderAdjusted: z.boolean(),
         })
         .strict(),
       annotations: WRITE_SAFE,
@@ -122,10 +138,11 @@ export function registerBlockTools(
             throw new Error("Each block must provide exactly one of previousID, nextID, or parentID.");
           }
         }
+        const orderedBlocks = orderBatchInsertBlocks(blocks);
         const data = await client.request<unknown>("/api/block/batchInsertBlock", {
-          blocks: blocks.map((block) => ({
+          blocks: orderedBlocks.map((block) => ({
             dataType: "markdown",
-            data: block.markdown,
+            data: normalizeMarkdownInput(block.markdown),
             previousID: block.previousID ?? "",
             nextID: block.nextID ?? "",
             parentID: block.parentID ?? "",
@@ -137,6 +154,7 @@ export function registerBlockTools(
           count: blocks.length,
           insertedBlockIds: operationIds,
           operationIds,
+          orderAdjusted: orderedBlocks !== blocks,
         });
       } catch (err) {
         return toolError(`siyuan_batch_insert_blocks failed: ${String(err)}`);
@@ -162,7 +180,7 @@ export function registerBlockTools(
       try {
         const data = await client.request<unknown>("/api/block/appendBlock", {
           dataType: "markdown",
-          data: markdown,
+          data: normalizeMarkdownInput(markdown),
           parentID,
         });
         const insertedBlockId = firstOperationIdFromTransactions(data);
@@ -212,7 +230,7 @@ export function registerBlockTools(
           blocks: blocks.map((block) => ({
             id: block.blockId,
             dataType: "markdown",
-            data: block.markdown,
+            data: normalizeMarkdownInput(block.markdown),
           })),
         });
         await client.flushTransaction();
@@ -245,7 +263,7 @@ export function registerBlockTools(
       try {
         const data = await client.request<unknown>("/api/block/prependBlock", {
           dataType: "markdown",
-          data: markdown,
+          data: normalizeMarkdownInput(markdown),
           parentID,
         });
         const insertedBlockId = firstOperationIdFromTransactions(data);
@@ -279,7 +297,7 @@ export function registerBlockTools(
       try {
         const data = await client.request<unknown>("/api/block/updateBlock", {
           dataType: "markdown",
-          data: markdown,
+          data: normalizeMarkdownInput(markdown),
           id: blockId,
         });
         await client.flushTransaction();
