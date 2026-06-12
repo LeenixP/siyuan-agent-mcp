@@ -7,7 +7,7 @@
 
 A high-quality MCP Server for [SiYuan Note](https://github.com/siyuan-note/siyuan). It lets MCP clients such as Claude Code, OpenCode, and Cursor safely read, search, write, and reorganize your local SiYuan workspace through the SiYuan HTTP Kernel API.
 
-[中文文档](./README.md) · [Release notes](./releases/v3.1.5.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
+[中文文档](./README.md) · [Release notes](./releases/v3.1.6.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
 ## What Can It Do
 
@@ -134,7 +134,7 @@ After read access works, set `SIYUAN_READ_ONLY` to `false` and restart the clien
 | Find a note | `siyuan_search_notes` -> `siyuan_read_doc` |
 | Understand a document structure | `siyuan_get_doc_outline` -> `siyuan_get_backlinks` -> `siyuan_get_doc_assets` |
 | Continue reading around a block | `siyuan_get_block` -> `siyuan_get_block_breadcrumb` -> `siyuan_get_child_blocks` |
-| Create a structured document | `siyuan_create_doc` with multi-line Markdown |
+| Create a structured document | `siyuan_create_doc` with multi-line Markdown; pass document tags through `tags` |
 | Append content to the end of a document | `siyuan_append_block` |
 | Insert multiple content blocks | `siyuan_batch_insert_blocks` |
 | Revise one or more blocks | `siyuan_update_block` or `siyuan_batch_update_blocks`; regular-block multi-block Markdown keeps the first block on the target ID and inserts following blocks after it |
@@ -152,7 +152,7 @@ After read access works, set `SIYUAN_READ_ONLY` to `false` and restart the clien
 | MCP-friendly tool names | Since v3, every tool uses the `siyuan_*` prefix to avoid collisions with other MCP servers |
 | Structured output | Tools return both text summaries and typed structured content so clients can parse results reliably |
 | Read-after-write behavior | Write tools flush SiYuan transactions before returning, reducing "written but not searchable yet" surprises |
-| Markdown protection | Write tools convert literal `\n` into real line breaks when needed, so multi-line Markdown is not parsed as one line |
+| Markdown protection | Write tools convert literal `\n` into real line breaks; `siyuan_create_doc` extracts accidental front matter/tag-only lines so metadata does not become visible body content |
 | Asset write workflows | Supports multipart upload, kernel-local path import, upload-then-insert, and reusable generated Markdown snippets |
 | Slash-menu semantic tools | Promotes SiYuan `/` menu items such as image, audio/video, iframe, HTML, math, callout, and diagram blocks into explicit MCP tools |
 | Read-only first | `SIYUAN_READ_ONLY=true` removes all write and state-changing tools from the exposed tool list |
@@ -268,7 +268,7 @@ For day-to-day use, start with the "Common Task Cheat Sheet" above. The complete
 
 | Tool | Description |
 |---|---|
-| `siyuan_create_doc` | Create a document with nested path and initial Markdown support; returns the existing document when the same path already exists |
+| `siyuan_create_doc` | Create a document with nested path, initial Markdown, and `tags` support; returns the existing document when the same path already exists |
 | `siyuan_create_daily_note` | Create or open today's daily note |
 | `siyuan_append_daily_note_block` | Create or open today's daily note and append a block |
 | `siyuan_prepend_daily_note_block` | Create or open today's daily note and prepend a block |
@@ -302,8 +302,8 @@ For day-to-day use, start with the "Common Task Cheat Sheet" above. The complete
 |---|---|
 | `siyuan_get_block_attrs` | Read block attributes |
 | `siyuan_batch_get_block_attrs` | Batch-read attributes for up to 100 blocks |
-| `siyuan_set_block_attrs` | Set or remove attributes, including `name`, `alias`, `memo`, `bookmark`, and `custom-*` |
-| `siyuan_batch_set_block_attrs` | Batch set or remove attributes for up to 100 blocks |
+| `siyuan_set_block_attrs` | Set or remove attributes, including `name`, `alias`, `memo`, `bookmark`, `tags`, and `custom-*` |
+| `siyuan_batch_set_block_attrs` | Batch set or remove attributes for up to 100 blocks, including normalized `tags` |
 | `siyuan_get_notebook_info` | Read detailed metadata for an open notebook |
 | `siyuan_create_notebook` | Create a notebook |
 | `siyuan_rename_notebook` | Rename a notebook |
@@ -339,6 +339,8 @@ Analyze and archive
 Important behavior:
 
 - `siyuan_create_doc` does not create same-name duplicate documents when the target human-readable path already exists. It returns the existing document ID with `existed=true` and `created=false`.
+- `siyuan_create_doc.tags` accepts comma-separated text, string arrays, or `#tag#` tokens. If initial Markdown accidentally starts with YAML front matter or tag-only lines, supported tags are extracted and the metadata block is removed from the visible body.
+- `siyuan_set_block_attrs` and `siyuan_batch_set_block_attrs` support the `tags` attribute and normalize input such as `#hardware# #power-test#` to SiYuan's comma-delimited tag value.
 - `siyuan_insert_block` requires exactly one anchor: `previousID`, `nextID`, or `parentID`.
 - `siyuan_batch_insert_blocks` reverses same-parent parentID-only batches before sending them to SiYuan so the final document order matches the input order.
 - `siyuan_upload_assets` streams files through the MCP process and defaults to a 512MB per-file cap; use `siyuan_import_local_assets` for large files so the SiYuan Kernel copies them directly.

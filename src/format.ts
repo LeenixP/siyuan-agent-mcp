@@ -73,6 +73,247 @@ export function normalizeMarkdownInput(markdown: string): string {
     .replace(/\\t/g, "\t");
 }
 
+function uniqueNonEmpty(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+}
+
+function cleanTagToken(value: string): string {
+  let tag = value
+    .trim()
+    .replace(/^[\s,，;；\-[\]"']+/, "")
+    .replace(/[\s,，;；\-\[\]"']+$/, "")
+    .trim();
+  tag = tag.replace(/^#+/, "").replace(/#+$/, "").trim();
+  return tag;
+}
+
+function addTagsFromText(tags: string[], value: string): void {
+  let text = value
+    .trim()
+    .replace(/^tags\s*:\s*/i, "")
+    .replace(/^-\s*/, "")
+    .trim();
+
+  if (
+    (text.startsWith("'") && text.endsWith("'")) ||
+    (text.startsWith('"') && text.endsWith('"'))
+  ) {
+    text = text.slice(1, -1);
+  }
+  if (text.startsWith("[") && text.endsWith("]")) {
+    text = text.slice(1, -1);
+  }
+
+  const closedTagPattern = /#+([^#\s](?:[^#\n]*?[^#\s])?)#+/g;
+  for (const match of text.matchAll(closedTagPattern)) {
+    const tag = cleanTagToken(match[1]);
+    if (tag) tags.push(tag);
+  }
+
+  const hashTokenPattern = /(^|\s)#([^#\s,，;；\]]+)/g;
+  for (const match of text.matchAll(hashTokenPattern)) {
+    const tag = cleanTagToken(match[2]);
+    if (tag) tags.push(tag);
+  }
+
+  if (!text.includes("#")) {
+    for (const part of text.split(/[,，;；\n]+/)) {
+      const tag = cleanTagToken(part);
+      if (tag) tags.push(tag);
+    }
+  }
+}
+
+/** Normalize common tag spellings (#tag, #tag#, YAML lists) to SiYuan's comma-delimited IAL value. */
+export function normalizeSiYuanTagsInput(
+  value: string | string[] | null | undefined
+): string {
+  if (value === null || value === undefined) return "";
+  const tags: string[] = [];
+  const values = Array.isArray(value) ? value : [value];
+  for (const item of values) {
+    for (const line of String(item).split(/\r?\n/)) {
+      addTagsFromText(tags, line);
+    }
+  }
+  return uniqueNonEmpty(tags).join(",");
+}
+
+function lineIsYamlFence(line: string): boolean {
+  return /^---\s*$/.test(line);
+}
+
+function isDocumentMetadataKeyLine(line: string): boolean {
+  return /^(title|date|lastmod|tags)\s*:/i.test(line.trim());
+}
+
+function parseYamlFrontMatterTags(lines: string[]): string {
+  const tags: string[] = [];
+  let currentKey = "";
+  for (const line of lines) {
+    const keyMatch = line.match(/^([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+    if (keyMatch) {
+      currentKey = keyMatch[1].toLowerCase();
+      if (currentKey === "tags" && keyMatch[2].trim()) {
+        addTagsFromText(tags, keyMatch[2]);
+      }
+      continue;
+    }
+    if (currentKey === "tags" && /^\s*-\s+/.test(line)) {
+      addTagsFromText(tags, line);
+    }
+  }
+  return normalizeSiYuanTagsInput(tags);
+}
+
+function frontMatterLooksLikeMetadata(lines: string[]): boolean {
+  return lines.some((line) => isDocumentMetadataKeyLine(line));
+}
+
+function findFrontMatterEnd(lines: string[], start: number): number {
+  if (!lineIsYamlFence(lines[start])) return -1;
+  for (let i = start + 1; i < lines.length; i += 1) {
+    if (lineIsYamlFence(lines[i])) return i;
+  }
+  return -1;
+}
+
+function firstNonBlankLine(lines: string[], start = 0): number {
+  for (let i = start; i < lines.length; i += 1) {
+    if (lines[i].trim() !== "") return i;
+  }
+  return -1;
+}
+
+function isPureTagLine(line: string): boolean {
+  const text = line.trim();
+  if (!text.includes("#")) return false;
+  const withoutTags = text
+    .replace(/#+[^#\s][^#]*?#+/g, " ")
+    .replace(/(^|\s)#[^#\s,，;；]+/g, " ")
+    .replace(/[\s,，;；]+/g, "");
+  return withoutTags === "";
+}
+
+function removeLines(lines: string[], start: number, endInclusive: number): string[] {
+  return [...lines.slice(0, start), ...lines.slice(endInclusive + 1)];
+}
+
+function looseMetadataEnd(lines: string[], start: number): number {
+  if (!isDocumentMetadataKeyLine(lines[start])) return -1;
+  let currentKey = "";
+  let end = start - 1;
+
+  for (let i = start; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (line.trim() === "") break;
+
+    const keyMatch = line.match(/^([A-Za-z0-9_-]+)\s*:/);
+    if (keyMatch) {
+      const key = keyMatch[1].toLowerCase();
+      if (!["title", "date", "lastmod", "tags"].includes(key)) break;
+      currentKey = key;
+      end = i;
+      continue;
+    }
+
+    if (currentKey === "tags" && /^\s*-\s+/.test(line)) {
+      end = i;
+      continue;
+    }
+
+    break;
+  }
+
+  return end >= start ? end : -1;
+}
+
+export interface PreparedMarkdownForSiYuan {
+  markdown: string;
+  tags: string;
+  removedMetadata: boolean;
+}
+
+/**
+ * Agents often bring Markdown front matter from other note systems. SiYuan does
+ * not treat that as document metadata on import through createDocWithMd, so move
+ * supported fields into API parameters and keep the document body clean.
+ */
+export function prepareMarkdownForSiYuanDoc(markdown: string): PreparedMarkdownForSiYuan {
+  let lines = normalizeMarkdownInput(markdown).replace(/\r\n?/g, "\n").split("\n");
+  const tags: string[] = [];
+  let removedMetadata = false;
+
+  const pushTags = (value: string): void => {
+    const normalized = normalizeSiYuanTagsInput(value);
+    if (normalized) tags.push(...normalized.split(","));
+  };
+
+  const stripFrontMatterAt = (start: number): boolean => {
+    const end = findFrontMatterEnd(lines, start);
+    if (end === -1) return false;
+    const metaLines = lines.slice(start + 1, end);
+    if (!frontMatterLooksLikeMetadata(metaLines)) return false;
+    pushTags(parseYamlFrontMatterTags(metaLines));
+    lines = removeLines(lines, start, end);
+    removedMetadata = true;
+    return true;
+  };
+
+  const stripLooseMetadataAt = (start: number): boolean => {
+    const end = looseMetadataEnd(lines, start);
+    if (end === -1) return false;
+    const metaLines = lines.slice(start, end + 1);
+    pushTags(parseYamlFrontMatterTags(metaLines));
+    lines = removeLines(lines, start, end);
+    removedMetadata = true;
+    return true;
+  };
+
+  let first = firstNonBlankLine(lines);
+  while (first !== -1 && isPureTagLine(lines[first])) {
+    pushTags(lines[first]);
+    lines = removeLines(lines, first, first);
+    removedMetadata = true;
+    first = firstNonBlankLine(lines);
+  }
+
+  if (first !== -1) {
+    if (!stripFrontMatterAt(first)) {
+      stripLooseMetadataAt(first);
+    }
+  }
+
+  first = firstNonBlankLine(lines);
+  if (first !== -1 && /^ {0,3}#{1,6}\s+/.test(lines[first])) {
+    const afterHeading = firstNonBlankLine(lines, first + 1);
+    if (afterHeading !== -1) {
+      if (!stripFrontMatterAt(afterHeading)) {
+        stripLooseMetadataAt(afterHeading);
+      }
+    }
+  }
+
+  let cleanedMarkdown = lines.join("\n");
+  if (removedMetadata) {
+    cleanedMarkdown = cleanedMarkdown.replace(/\n{3,}/g, "\n\n");
+  }
+
+  return {
+    markdown: cleanedMarkdown.replace(/^\n+/, "").replace(/\n+$/, ""),
+    tags: normalizeSiYuanTagsInput(tags),
+    removedMetadata,
+  };
+}
+
+export function metadataWarningsForBodyMarkdown(markdown: string, label = "markdown"): string[] {
+  const prepared = prepareMarkdownForSiYuanDoc(markdown);
+  if (!prepared.removedMetadata) return [];
+  return [
+    `${label} appears to contain document metadata (YAML front matter or tag-only lines). Body block tools write visible content; use siyuan_create_doc.tags or siyuan_set_block_attrs.tags for SiYuan tags instead.`,
+  ];
+}
+
 /** Keep only the fields agents care about, dropping internal hashes and paths. */
 export function pickBlockFields(b: SiYuanBlock) {
   return {

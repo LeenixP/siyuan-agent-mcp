@@ -3,7 +3,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
-import { toolError, toolResult } from "../format.js";
+import { normalizeSiYuanTagsInput, toolError, toolResult } from "../format.js";
 import { UnknownRecordSchema, idSchema } from "../schemas.js";
 import {
   READ_ONLY,
@@ -19,13 +19,22 @@ function validateAttrKeys(attrs: Record<string, string | null>): void {
   if (keys.length === 0) {
     throw new Error("Provide at least one attribute.");
   }
-  const allowed = new Set(["name", "alias", "memo", "bookmark"]);
+  const allowed = new Set(["name", "alias", "memo", "bookmark", "tags"]);
   const invalid = keys.filter((key) => !key.startsWith("custom-") && !allowed.has(key));
   if (invalid.length > 0) {
     throw new Error(
-      `Invalid attribute key(s): ${invalid.join(", ")}. Use name, alias, memo, bookmark, or custom-* keys.`
+      `Invalid attribute key(s): ${invalid.join(", ")}. Use name, alias, memo, bookmark, tags, or custom-* keys.`
     );
   }
+}
+
+function normalizeAttrValues(attrs: Record<string, string | null>): Record<string, string | null> {
+  return Object.fromEntries(
+    Object.entries(attrs).map(([key, value]) => [
+      key,
+      key === "tags" && typeof value === "string" ? normalizeSiYuanTagsInput(value) : value,
+    ])
+  );
 }
 
 export function registerAttrTools(
@@ -91,22 +100,29 @@ export function registerAttrTools(
       legacyName: "set_block_attrs",
       title: "Set SiYuan block attributes",
       description:
-        "Set or remove block attributes. Values must be strings; null removes the attribute. Custom keys must start with custom-.",
+        "Set or remove block attributes. Values must be strings; null removes the attribute. Built-in keys include name, alias, memo, bookmark, and tags. For tags, pass comma-separated text or #tag# tokens; the tool normalizes them to SiYuan's comma-delimited tags attribute. Custom keys must start with custom-.",
       inputSchema: z
         .object({
           blockId: idSchema,
           attrs: z.record(ATTR_VALUE_SCHEMA),
         })
         .strict(),
-      outputSchema: z.object({ blockId: z.string(), setKeys: z.array(z.string()) }).strict(),
+      outputSchema: z
+        .object({
+          blockId: z.string(),
+          setKeys: z.array(z.string()),
+          attrs: z.record(ATTR_VALUE_SCHEMA),
+        })
+        .strict(),
       annotations: WRITE_IDEMPOTENT,
     },
     async ({ blockId, attrs }) => {
       try {
         validateAttrKeys(attrs);
-        await client.request("/api/attr/setBlockAttrs", { id: blockId, attrs });
+        const normalizedAttrs = normalizeAttrValues(attrs);
+        await client.request("/api/attr/setBlockAttrs", { id: blockId, attrs: normalizedAttrs });
         await client.flushTransaction();
-        return toolResult({ blockId, setKeys: Object.keys(attrs) });
+        return toolResult({ blockId, setKeys: Object.keys(normalizedAttrs), attrs: normalizedAttrs });
       } catch (err) {
         return toolError(`siyuan_set_block_attrs failed: ${String(err)}`);
       }
@@ -120,7 +136,7 @@ export function registerAttrTools(
       name: "siyuan_batch_set_block_attrs",
       title: "Batch set SiYuan block attributes",
       description:
-        "Set or remove attributes for up to 100 blocks. Values must be strings; null removes the attribute. Custom keys must start with custom-.",
+        "Set or remove attributes for up to 100 blocks. Values must be strings; null removes the attribute. Built-in keys include name, alias, memo, bookmark, and tags. For tags, pass comma-separated text or #tag# tokens; the tool normalizes them to SiYuan's comma-delimited tags attribute. Custom keys must start with custom-.",
       inputSchema: z
         .object({
           blockAttrs: z
@@ -141,19 +157,23 @@ export function registerAttrTools(
     },
     async ({ blockAttrs }) => {
       try {
-        for (const item of blockAttrs) {
+        const normalizedBlockAttrs = blockAttrs.map((item) => ({
+          blockId: item.blockId,
+          attrs: normalizeAttrValues(item.attrs),
+        }));
+        for (const item of normalizedBlockAttrs) {
           validateAttrKeys(item.attrs);
         }
         await client.request("/api/attr/batchSetBlockAttrs", {
-          blockAttrs: blockAttrs.map((item) => ({
+          blockAttrs: normalizedBlockAttrs.map((item) => ({
             id: item.blockId,
             attrs: item.attrs,
           })),
         });
         await client.flushTransaction();
         return toolResult({
-          count: blockAttrs.length,
-          blockIds: blockAttrs.map((item) => item.blockId),
+          count: normalizedBlockAttrs.length,
+          blockIds: normalizedBlockAttrs.map((item) => item.blockId),
         });
       } catch (err) {
         return toolError(`siyuan_batch_set_block_attrs failed: ${String(err)}`);

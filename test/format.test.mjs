@@ -9,6 +9,9 @@ import {
   truncateWithInfo,
   truncationInfo,
   normalizeMarkdownInput,
+  normalizeSiYuanTagsInput,
+  prepareMarkdownForSiYuanDoc,
+  metadataWarningsForBodyMarkdown,
   splitMarkdownBlocks,
   splitMarkdownForBlockUpdate,
   pickBlockFields,
@@ -68,6 +71,62 @@ test("normalizeMarkdownInput converts literal escaped newlines only when needed"
   assert.equal(normalizeMarkdownInput("# Title\\n\\nBody"), "# Title\n\nBody");
   assert.equal(normalizeMarkdownInput("# Title\n\\nBody"), "# Title\n\\nBody");
   assert.equal(normalizeMarkdownInput("plain text"), "plain text");
+});
+
+test("normalizeSiYuanTagsInput accepts common agent tag spellings", () => {
+  assert.equal(
+    normalizeSiYuanTagsInput("#硬件# #上电测试# #TCA9554# #TPS65131#"),
+    "硬件,上电测试,TCA9554,TPS65131"
+  );
+  assert.equal(normalizeSiYuanTagsInput(["硬件", "上电测试", "#TCA9554#"]), "硬件,上电测试,TCA9554");
+  assert.equal(normalizeSiYuanTagsInput("硬件， 上电测试;TCA9554"), "硬件,上电测试,TCA9554");
+});
+
+test("prepareMarkdownForSiYuanDoc removes visible tag-only lines and front matter", () => {
+  const prepared = prepareMarkdownForSiYuanDoc(
+    [
+      "##泰山派# #RK3576# #in-cell# #MIPI-DSI#",
+      "",
+      "# 00-项目总览与当前状态",
+      "",
+      "---",
+      "title: 00-项目总览与当前状态",
+      "date: 2026-06-12T12:18:59+08:00",
+      "tags:",
+      "  - '#项目 #硬件 #RK3576'",
+      "---",
+      "",
+      "项目目标",
+    ].join("\n")
+  );
+
+  assert.equal(prepared.markdown, "# 00-项目总览与当前状态\n\n项目目标");
+  assert.equal(prepared.tags, "泰山派,RK3576,in-cell,MIPI-DSI,项目,硬件");
+  assert.equal(prepared.removedMetadata, true);
+});
+
+test("prepareMarkdownForSiYuanDoc removes loose metadata after a title", () => {
+  const prepared = prepareMarkdownForSiYuanDoc(
+    [
+      "# 01-硬件架构与上电记录",
+      "",
+      "title: 01-硬件架构与上电记录",
+      "lastmod: 2026-06-12T16:50:00+08:00",
+      "tags:",
+      "  - '#硬件 #上电测试 #TCA9554 #TPS65131'",
+      "",
+      "正文",
+    ].join("\n")
+  );
+
+  assert.equal(prepared.markdown, "# 01-硬件架构与上电记录\n\n正文");
+  assert.equal(prepared.tags, "硬件,上电测试,TCA9554,TPS65131");
+});
+
+test("metadataWarningsForBodyMarkdown warns without mutating body tools", () => {
+  const warnings = metadataWarningsForBodyMarkdown("---\ntags: #硬件#\n---\n\n正文");
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /document metadata/);
 });
 
 test("splitMarkdownForBlockUpdate separates heading and following body", () => {

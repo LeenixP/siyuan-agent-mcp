@@ -5,6 +5,7 @@ import { registerKnowledgeTools } from "../dist/tools/knowledge.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { registerBlockTools } from "../dist/tools/blocks.js";
 import { registerAssetTools } from "../dist/tools/assets.js";
+import { registerAttrTools } from "../dist/tools/attrs.js";
 
 const options = {
   readOnlyMode: false,
@@ -125,6 +126,72 @@ test("siyuan_create_doc returns existing same-path document without creating dup
   assert.equal(result.structuredContent.created, false);
 });
 
+test("siyuan_create_doc extracts tags and removes visible front matter from markdown", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const docId = "20240101010101-abcdef0";
+  const notebookId = "20210817205410-2kvfpfn";
+  const client = new FakeClient([[], docId]);
+  registerDocTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_create_doc.handler({
+    notebookId,
+    title: "00-项目总览与当前状态",
+    markdown: [
+      "##泰山派# #RK3576# #in-cell# #MIPI-DSI#",
+      "",
+      "# 00-项目总览与当前状态",
+      "",
+      "---",
+      "title: 00-项目总览与当前状态",
+      "date: 2026-06-12T12:18:59+08:00",
+      "tags:",
+      "  - '#硬件 #上电测试 #TCA9554 #TPS65131'",
+      "---",
+      "",
+      "项目目标",
+    ].join("\n"),
+  });
+
+  assert.equal(client.calls[1].endpoint, "/api/filetree/createDocWithMd");
+  assert.deepEqual(client.calls[1].body, {
+    notebook: notebookId,
+    path: "/00-项目总览与当前状态",
+    markdown: "# 00-项目总览与当前状态\n\n项目目标",
+    tags: "泰山派,RK3576,in-cell,MIPI-DSI,硬件,上电测试,TCA9554,TPS65131",
+  });
+  assert.deepEqual(result.structuredContent.tags, [
+    "泰山派",
+    "RK3576",
+    "in-cell",
+    "MIPI-DSI",
+    "硬件",
+    "上电测试",
+    "TCA9554",
+    "TPS65131",
+  ]);
+  assert.equal(result.structuredContent.metadataNormalized, true);
+  assert.match(result.structuredContent.warnings[0], /Extracted document metadata/);
+});
+
+test("siyuan_create_doc normalizes explicit tag input", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const docId = "20240101010101-abcdef0";
+  const notebookId = "20210817205410-2kvfpfn";
+  const client = new FakeClient([[], docId]);
+  registerDocTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_create_doc.handler({
+    notebookId,
+    title: "Tagged",
+    markdown: "Body",
+    tags: ["#硬件#", "#上电测试#", "TCA9554"],
+  });
+
+  assert.equal(client.calls[1].body.tags, "硬件,上电测试,TCA9554");
+  assert.deepEqual(result.structuredContent.tags, ["硬件", "上电测试", "TCA9554"]);
+  assert.equal(result.structuredContent.metadataNormalized, true);
+});
+
 test("siyuan_batch_insert_blocks maps anchors and returns transaction IDs", async () => {
   const server = new McpServer({ name: "test", version: "1.0.0" });
   const parentID = "20210817205410-2kvfpfn";
@@ -172,6 +239,26 @@ test("siyuan_batch_insert_blocks reverses same-parent inserts to preserve final 
 
   assert.deepEqual(client.calls[0].body.blocks.map((block) => block.data), ["second", "first"]);
   assert.equal(result.structuredContent.orderAdjusted, true);
+});
+
+test("siyuan_append_block warns when markdown looks like document metadata", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const parentID = "20210817205410-2kvfpfn";
+  const insertedID = "20240101010101-abcdef0";
+  const markdown = "---\ntags: #硬件#\n---\n\n正文";
+  const client = new FakeClient([
+    [{ doOperations: [{ id: insertedID, action: "insert" }] }],
+  ]);
+  registerBlockTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_append_block.handler({
+    parentID,
+    markdown,
+  });
+
+  assert.equal(client.calls[0].body.data, markdown);
+  assert.equal(result.structuredContent.warnings.length, 1);
+  assert.match(result.structuredContent.warnings[0], /document metadata/);
 });
 
 test("siyuan_update_block expands multi-block markdown after the updated block", async () => {
@@ -375,6 +462,33 @@ test("siyuan_move_block omits absent anchors for previousID-only moves", async (
     },
   });
   assert.equal(result.structuredContent.moved, blockId);
+});
+
+test("siyuan_set_block_attrs accepts and normalizes tags", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const blockId = "20240101010101-abcdef0";
+  const client = new FakeClient([{}]);
+  registerAttrTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_set_block_attrs.handler({
+    blockId,
+    attrs: {
+      tags: "#硬件# #上电测试# #TCA9554#",
+      "custom-owner": "mcp",
+    },
+  });
+
+  assert.deepEqual(client.calls[0], {
+    endpoint: "/api/attr/setBlockAttrs",
+    body: {
+      id: blockId,
+      attrs: {
+        tags: "硬件,上电测试,TCA9554",
+        "custom-owner": "mcp",
+      },
+    },
+  });
+  assert.equal(result.structuredContent.attrs.tags, "硬件,上电测试,TCA9554");
 });
 
 test("siyuan_upload_assets uploads multipart text payload and can insert generated asset markdown", async () => {

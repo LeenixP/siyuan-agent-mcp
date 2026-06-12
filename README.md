@@ -7,7 +7,7 @@
 
 面向 [SiYuan 笔记](https://github.com/siyuan-note/siyuan) 的高质量 MCP Server。它让 Claude Code、OpenCode、Cursor 等 MCP 客户端通过 SiYuan HTTP Kernel API 安全地读取、搜索、写入和整理你的本地笔记工作空间。
 
-[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.5.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
+[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.6.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
 ## 你可以用它做什么
 
@@ -134,7 +134,7 @@ curl -H "Authorization: Token $SIYUAN_API_TOKEN" http://127.0.0.1:6806/api/syste
 | 找一篇笔记 | `siyuan_search_notes` -> `siyuan_read_doc` |
 | 了解一篇文档结构 | `siyuan_get_doc_outline` -> `siyuan_get_backlinks` -> `siyuan_get_doc_assets` |
 | 围绕某个块继续阅读 | `siyuan_get_block` -> `siyuan_get_block_breadcrumb` -> `siyuan_get_child_blocks` |
-| 创建结构化文档 | `siyuan_create_doc`，传入多行 Markdown |
+| 创建结构化文档 | `siyuan_create_doc`，传入多行 Markdown；文档标签用 `tags` 参数 |
 | 在文档末尾追加内容 | `siyuan_append_block` |
 | 批量插入多段内容 | `siyuan_batch_insert_blocks` |
 | 修订一段或多段内容 | `siyuan_update_block` 或 `siyuan_batch_update_blocks`，普通块的多块 Markdown 会保留首块并把后续块插入到目标块之后 |
@@ -152,7 +152,7 @@ curl -H "Authorization: Token $SIYUAN_API_TOKEN" http://127.0.0.1:6806/api/syste
 | MCP 友好的工具命名 | v3 起所有工具使用 `siyuan_*` 前缀，避免和其他 MCP Server 冲突 |
 | 结构化输出 | 工具返回文本摘要和 typed structured content，方便客户端稳定解析 |
 | 写入后可读 | 写入工具返回前会刷新 SiYuan transaction，减少“刚写完搜不到”的问题 |
-| Markdown 保护 | 写入工具会把字面量 `\n` 转成真实换行，避免多行 Markdown 被当作单行文本 |
+| Markdown 保护 | 写入工具会把字面量 `\n` 转成真实换行；`siyuan_create_doc` 会抽取误放在正文里的 front matter/tag-only 行，避免元数据变成可见内容 |
 | 资源写入工作流 | 支持 multipart 上传、内核本地路径导入、上传后自动插入，并返回可复用的 Markdown 片段 |
 | 斜杠菜单语义工具 | 把 SiYuan `/` 菜单中的图片、音视频、iframe、HTML、公式、callout 和图表类内容提升为显式 MCP 工具 |
 | 只读优先 | `SIYUAN_READ_ONLY=true` 会从工具列表中移除所有写入和状态变更工具 |
@@ -268,7 +268,7 @@ Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 
 | 工具 | 说明 |
 |---|---|
-| `siyuan_create_doc` | 创建文档，支持嵌套路径和初始 Markdown；同路径已有文档时返回已有文档 |
+| `siyuan_create_doc` | 创建文档，支持嵌套路径、初始 Markdown 和 `tags` 文档标签；同路径已有文档时返回已有文档 |
 | `siyuan_create_daily_note` | 创建或打开当天日记 |
 | `siyuan_append_daily_note_block` | 创建或打开当天日记，并向末尾追加块 |
 | `siyuan_prepend_daily_note_block` | 创建或打开当天日记，并向开头前置块 |
@@ -302,8 +302,8 @@ Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 |---|---|
 | `siyuan_get_block_attrs` | 读取块属性 |
 | `siyuan_batch_get_block_attrs` | 批量读取最多 100 个块的属性 |
-| `siyuan_set_block_attrs` | 设置或移除属性，支持 `name`、`alias`、`memo`、`bookmark` 和 `custom-*` |
-| `siyuan_batch_set_block_attrs` | 批量设置或移除最多 100 个块的属性 |
+| `siyuan_set_block_attrs` | 设置或移除属性，支持 `name`、`alias`、`memo`、`bookmark`、`tags` 和 `custom-*` |
+| `siyuan_batch_set_block_attrs` | 批量设置或移除最多 100 个块的属性，支持规范化 `tags` |
 | `siyuan_get_notebook_info` | 读取已打开笔记本的详细元数据 |
 | `siyuan_create_notebook` | 创建笔记本 |
 | `siyuan_rename_notebook` | 重命名笔记本 |
@@ -339,6 +339,8 @@ Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 重要行为：
 
 - `siyuan_create_doc` 在目标可读路径已存在时不会创建同名重复文档，而是返回已有文档 ID，并设置 `existed=true`、`created=false`。
+- `siyuan_create_doc` 的 `tags` 可传逗号字符串、字符串数组或 `#标签#` 形式；若初始 Markdown 顶部误带 YAML front matter 或纯标签行，会抽取 tags 并从正文移除。
+- `siyuan_set_block_attrs` 和 `siyuan_batch_set_block_attrs` 支持 `tags` 属性，并会把 `#硬件# #上电测试#` 规范化为思源需要的 `硬件,上电测试`。
 - `siyuan_insert_block` 必须且只能提供一个锚点：`previousID`、`nextID` 或 `parentID`。
 - `siyuan_batch_insert_blocks` 对同一个 `parentID` 的 parentID-only 批量插入会在发送给 SiYuan 前反向提交，从而让最终文档顺序与输入顺序一致。
 - `siyuan_upload_assets` 会把文件流经 MCP 进程，默认单文件上限 512MB；大文件优先用 `siyuan_import_local_assets` 让 SiYuan Kernel 直接复制。

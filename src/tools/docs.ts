@@ -6,8 +6,11 @@ import type { SiYuanClient } from "../client.js";
 import {
   MAX_CONTENT_LENGTH,
   firstOperationIdFromTransactions,
+  metadataWarningsForBodyMarkdown,
   normalizeMarkdownInput,
+  normalizeSiYuanTagsInput,
   operationIdsFromTransactions,
+  prepareMarkdownForSiYuanDoc,
   requireConfirmId,
   toolError,
   toolResult,
@@ -38,6 +41,36 @@ function docChildContainerPath(storagePath: string): string {
 
 function docParentContainerPath(storagePath: string): string {
   return storagePath.replace(/\/[^/]+\.sy$/, "");
+}
+
+const DocumentTagsInputSchema = z
+  .union([z.string().max(1000), z.array(z.string().min(1).max(100)).max(100)])
+  .optional()
+  .describe(
+    "Document tags as a comma-separated string or string array. Accepts forms like 硬件,上电测试, [\"硬件\",\"上电测试\"], or #硬件# #上电测试#; the tool normalizes them to SiYuan's comma-delimited tags attribute."
+  );
+
+function splitNormalizedTags(tags: string): string[] {
+  return tags ? tags.split(",").map((tag) => tag.trim()).filter(Boolean) : [];
+}
+
+function mergeDocumentTags(
+  explicitTags: string | string[] | undefined,
+  extractedTags: string
+): string {
+  const values: string[] = [];
+  if (explicitTags !== undefined) {
+    values.push(...(Array.isArray(explicitTags) ? explicitTags : [explicitTags]));
+  }
+  if (extractedTags) values.push(extractedTags);
+  return normalizeSiYuanTagsInput(values);
+}
+
+function tagsInputWasNormalized(tags: string | string[] | undefined): boolean {
+  if (tags === undefined) return false;
+  if (Array.isArray(tags)) return true;
+  const trimmed = tags.trim();
+  return trimmed !== "" && normalizeSiYuanTagsInput(tags) !== trimmed;
 }
 
 async function findExistingDocId(
@@ -86,8 +119,10 @@ export function registerDocTools(
         .string()
         .max(MAX_CONTENT_LENGTH)
         .default("")
-        .describe("Optional initial GFM Markdown body."),
-      tags: z.string().max(500).optional(),
+        .describe(
+          "Optional initial GFM Markdown body. Do not put document YAML front matter or tag-only lines here; use tags instead. If common front matter is supplied accidentally, this tool extracts supported tags and removes the metadata block from the body."
+        ),
+      tags: DocumentTagsInputSchema,
       withMath: z.boolean().optional(),
       clippingHref: z.string().url().optional(),
     })
@@ -101,7 +136,7 @@ export function registerDocTools(
       legacyName: "create_doc",
       title: "Create SiYuan document",
       description:
-        "Create a document in a notebook, optionally nested under a parent document. Repeated calls with the same path do not overwrite existing documents.",
+        "Create a document in a notebook, optionally nested under a parent document. Repeated calls with the same path do not overwrite existing documents. Use the tags parameter for SiYuan document tags; do not write YAML front matter or visible #tag lines into markdown.",
       inputSchema: CreateDocInputSchema,
       outputSchema: z
         .object({
@@ -112,6 +147,9 @@ export function registerDocTools(
           parentDocId: z.string().nullable(),
           existed: z.boolean(),
           created: z.boolean(),
+          tags: z.array(z.string()),
+          metadataNormalized: z.boolean(),
+          warnings: z.array(z.string()),
         })
         .strict(),
       annotations: WRITE_SAFE,
@@ -136,6 +174,8 @@ export function registerDocTools(
         }
         const existingDocId = await findExistingDocId(client, notebookId, path, parentDocId);
         if (existingDocId) {
+          const requestedInitialContent =
+            normalizeMarkdownInput(markdown).trim() !== "" || normalizeSiYuanTagsInput(tags) !== "";
           return toolResult({
             createdDocId: existingDocId,
             notebookId,
@@ -144,16 +184,31 @@ export function registerDocTools(
             parentDocId: parentDocId ?? null,
             existed: true,
             created: false,
+            tags: [],
+            metadataNormalized: false,
+            warnings: requestedInitialContent
+              ? ["Document already exists; initial markdown and tags were not applied."]
+              : [],
           });
         }
-        const normalizedMarkdown = normalizeMarkdownInput(markdown);
+        const prepared = prepareMarkdownForSiYuanDoc(markdown);
+        const normalizedTags = mergeDocumentTags(tags, prepared.tags);
+        const warnings: string[] = [];
+        if (prepared.removedMetadata) {
+          warnings.push(
+            "Extracted document metadata from markdown and removed it from the visible document body."
+          );
+        }
+        if (tagsInputWasNormalized(tags)) {
+          warnings.push("Normalized document tags to SiYuan's comma-delimited tags attribute.");
+        }
         const createdDocId = await client.request<string>("/api/filetree/createDocWithMd", {
           notebook: notebookId,
           path,
-          markdown: normalizedMarkdown,
+          markdown: prepared.markdown,
           ...(parentDocId ? { parentID: parentDocId } : {}),
           ...(docId ? { id: docId } : {}),
-          ...(tags ? { tags } : {}),
+          ...(normalizedTags ? { tags: normalizedTags } : {}),
           ...(withMath !== undefined ? { withMath } : {}),
           ...(clippingHref ? { clippingHref } : {}),
         });
@@ -166,6 +221,9 @@ export function registerDocTools(
           parentDocId: parentDocId ?? null,
           existed: false,
           created: true,
+          tags: splitNormalizedTags(normalizedTags),
+          metadataNormalized: prepared.removedMetadata || tagsInputWasNormalized(tags),
+          warnings,
         });
       } catch (err) {
         return toolError(`siyuan_create_doc failed: ${String(err)}`);
@@ -287,13 +345,15 @@ export function registerDocTools(
     {
       name: "siyuan_append_daily_note_block",
       title: "Append SiYuan daily note block",
-      description: "Create/open today's daily note and append a Markdown block to it.",
+      description:
+        "Create/open today's daily note and append a Markdown block to it. This is for body content; use block/document attributes for metadata tags.",
       inputSchema: DailyNoteBlockInputSchema,
       outputSchema: z
         .object({
           notebookId: z.string(),
           insertedBlockId: z.string(),
           operationIds: z.array(z.string()),
+          warnings: z.array(z.string()),
         })
         .strict(),
       annotations: WRITE_SAFE,
@@ -301,6 +361,7 @@ export function registerDocTools(
     async ({ notebookId, markdown }) => {
       try {
         const normalizedMarkdown = normalizeMarkdownInput(markdown);
+        const warnings = metadataWarningsForBodyMarkdown(markdown);
         const data = await client.request<unknown>("/api/block/appendDailyNoteBlock", {
           notebook: notebookId,
           dataType: "markdown",
@@ -315,6 +376,7 @@ export function registerDocTools(
           notebookId,
           insertedBlockId,
           operationIds: operationIdsFromTransactions(data),
+          warnings,
         });
       } catch (err) {
         return toolError(`siyuan_append_daily_note_block failed: ${String(err)}`);
@@ -328,13 +390,15 @@ export function registerDocTools(
     {
       name: "siyuan_prepend_daily_note_block",
       title: "Prepend SiYuan daily note block",
-      description: "Create/open today's daily note and prepend a Markdown block to it.",
+      description:
+        "Create/open today's daily note and prepend a Markdown block to it. This is for body content; use block/document attributes for metadata tags.",
       inputSchema: DailyNoteBlockInputSchema,
       outputSchema: z
         .object({
           notebookId: z.string(),
           insertedBlockId: z.string(),
           operationIds: z.array(z.string()),
+          warnings: z.array(z.string()),
         })
         .strict(),
       annotations: WRITE_SAFE,
@@ -342,6 +406,7 @@ export function registerDocTools(
     async ({ notebookId, markdown }) => {
       try {
         const normalizedMarkdown = normalizeMarkdownInput(markdown);
+        const warnings = metadataWarningsForBodyMarkdown(markdown);
         const data = await client.request<unknown>("/api/block/prependDailyNoteBlock", {
           notebook: notebookId,
           dataType: "markdown",
@@ -356,6 +421,7 @@ export function registerDocTools(
           notebookId,
           insertedBlockId,
           operationIds: operationIdsFromTransactions(data),
+          warnings,
         });
       } catch (err) {
         return toolError(`siyuan_prepend_daily_note_block failed: ${String(err)}`);

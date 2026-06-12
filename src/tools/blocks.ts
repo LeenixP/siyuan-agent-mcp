@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { SiYuanClient } from "../client.js";
 import {
   firstOperationIdFromTransactions,
+  metadataWarningsForBodyMarkdown,
   normalizeMarkdownInput,
   operationIdsFromTransactions,
   requireConfirmId,
@@ -42,6 +43,10 @@ function orderBatchInsertBlocks(blocks: BatchInsertBlock[]): BatchInsertBlock[] 
 
 function uniqueIds(ids: string[]): string[] {
   return Array.from(new Set(ids.filter((id) => id !== "")));
+}
+
+function uniqueWarnings(warnings: string[]): string[] {
+  return Array.from(new Set(warnings));
 }
 
 async function updateBlockMarkdown(
@@ -122,10 +127,14 @@ export function registerBlockTools(
       legacyName: "insert_block",
       title: "Insert SiYuan block",
       description:
-        "Insert a Markdown block at a precise position. Provide exactly one of previousID, nextID, or parentID.",
+        "Insert a Markdown block at a precise position. Provide exactly one of previousID, nextID, or parentID. This is for body content; use siyuan_create_doc.tags or siyuan_set_block_attrs.tags for document metadata tags.",
       inputSchema: InsertBlockInputSchema,
       outputSchema: z
-        .object({ insertedBlockId: z.string(), operationIds: z.array(z.string()) })
+        .object({
+          insertedBlockId: z.string(),
+          operationIds: z.array(z.string()),
+          warnings: z.array(z.string()),
+        })
         .strict(),
       annotations: WRITE_SAFE,
     },
@@ -149,6 +158,7 @@ export function registerBlockTools(
         return toolResult({
           insertedBlockId,
           operationIds: operationIdsFromTransactions(data),
+          warnings: metadataWarningsForBodyMarkdown(markdown),
         });
       } catch (err) {
         return toolError(`siyuan_insert_block failed: ${String(err)}`);
@@ -181,7 +191,7 @@ export function registerBlockTools(
       name: "siyuan_batch_insert_blocks",
       title: "Batch insert SiYuan blocks",
       description:
-        "Insert up to 50 Markdown blocks in one SiYuan transaction batch. Each item must provide exactly one of previousID, nextID, or parentID.",
+        "Insert up to 50 Markdown body blocks in one SiYuan transaction batch. Each item must provide exactly one of previousID, nextID, or parentID. Use attributes, not visible Markdown, for document metadata tags.",
       inputSchema: BatchInsertBlockInputSchema,
       outputSchema: z
         .object({
@@ -189,6 +199,7 @@ export function registerBlockTools(
           insertedBlockIds: z.array(z.string()),
           operationIds: z.array(z.string()),
           orderAdjusted: z.boolean(),
+          warnings: z.array(z.string()),
         })
         .strict(),
       annotations: WRITE_SAFE,
@@ -217,6 +228,11 @@ export function registerBlockTools(
           insertedBlockIds: operationIds,
           operationIds,
           orderAdjusted: orderedBlocks !== blocks,
+          warnings: uniqueWarnings(
+            blocks.flatMap((block, index) =>
+              metadataWarningsForBodyMarkdown(block.markdown, `blocks[${index}].markdown`)
+            )
+          ),
         });
       } catch (err) {
         return toolError(`siyuan_batch_insert_blocks failed: ${String(err)}`);
@@ -231,10 +247,15 @@ export function registerBlockTools(
       name: "siyuan_append_block",
       legacyName: "append_block",
       title: "Append SiYuan block",
-      description: "Append a Markdown block as the last child of a parent block/document.",
+      description:
+        "Append a Markdown block as the last child of a parent block/document. This is for body content; use siyuan_create_doc.tags or siyuan_set_block_attrs.tags for document metadata tags.",
       inputSchema: z.object({ parentID: idSchema, markdown: markdownSchema }).strict(),
       outputSchema: z
-        .object({ insertedBlockId: z.string(), operationIds: z.array(z.string()) })
+        .object({
+          insertedBlockId: z.string(),
+          operationIds: z.array(z.string()),
+          warnings: z.array(z.string()),
+        })
         .strict(),
       annotations: WRITE_SAFE,
     },
@@ -253,6 +274,7 @@ export function registerBlockTools(
         return toolResult({
           insertedBlockId,
           operationIds: operationIdsFromTransactions(data),
+          warnings: metadataWarningsForBodyMarkdown(markdown),
         });
       } catch (err) {
         return toolError(`siyuan_append_block failed: ${String(err)}`);
@@ -276,7 +298,7 @@ export function registerBlockTools(
       name: "siyuan_batch_update_blocks",
       title: "Batch update SiYuan blocks",
       description:
-        "Replace up to 50 blocks with Markdown. Regular-block multi-block Markdown is expanded safely; document-block Markdown remains a full-document replacement.",
+        "Replace up to 50 blocks with Markdown body content. Regular-block multi-block Markdown is expanded safely; document-block Markdown remains a full-document replacement. Use attributes, not visible Markdown, for document metadata tags.",
       inputSchema: BatchUpdateBlockInputSchema,
       outputSchema: z
         .object({
@@ -285,6 +307,7 @@ export function registerBlockTools(
           operationIds: z.array(z.string()),
           insertedBlockIds: z.array(z.string()),
           expanded: z.boolean(),
+          warnings: z.array(z.string()),
         })
         .strict(),
       annotations: WRITE_IDEMPOTENT,
@@ -328,6 +351,11 @@ export function registerBlockTools(
           operationIds,
           insertedBlockIds,
           expanded,
+          warnings: uniqueWarnings(
+            blocks.flatMap((block, index) =>
+              metadataWarningsForBodyMarkdown(block.markdown, `blocks[${index}].markdown`)
+            )
+          ),
         });
       } catch (err) {
         return toolError(`siyuan_batch_update_blocks failed: ${String(err)}`);
@@ -342,10 +370,15 @@ export function registerBlockTools(
       name: "siyuan_prepend_block",
       legacyName: "prepend_block",
       title: "Prepend SiYuan block",
-      description: "Prepend a Markdown block as the first child of a parent block/document.",
+      description:
+        "Prepend a Markdown block as the first child of a parent block/document. This is for body content; use siyuan_create_doc.tags or siyuan_set_block_attrs.tags for document metadata tags.",
       inputSchema: z.object({ parentID: idSchema, markdown: markdownSchema }).strict(),
       outputSchema: z
-        .object({ insertedBlockId: z.string(), operationIds: z.array(z.string()) })
+        .object({
+          insertedBlockId: z.string(),
+          operationIds: z.array(z.string()),
+          warnings: z.array(z.string()),
+        })
         .strict(),
       annotations: WRITE_SAFE,
     },
@@ -364,6 +397,7 @@ export function registerBlockTools(
         return toolResult({
           insertedBlockId,
           operationIds: operationIdsFromTransactions(data),
+          warnings: metadataWarningsForBodyMarkdown(markdown),
         });
       } catch (err) {
         return toolError(`siyuan_prepend_block failed: ${String(err)}`);
@@ -379,7 +413,7 @@ export function registerBlockTools(
       legacyName: "update_block",
       title: "Update SiYuan block",
       description:
-        "Replace a block's content with new Markdown. For regular blocks, multi-block Markdown updates the target block with the first block and inserts the remaining blocks immediately after it; document blocks remain full-document replacements.",
+        "Replace a block's content with new Markdown body content. For regular blocks, multi-block Markdown updates the target block with the first block and inserts the remaining blocks immediately after it; document blocks remain full-document replacements. Use attributes, not visible Markdown, for document metadata tags.",
       inputSchema: z.object({ blockId: idSchema, markdown: markdownSchema }).strict(),
       outputSchema: z
         .object({
@@ -387,6 +421,7 @@ export function registerBlockTools(
           operationIds: z.array(z.string()),
           insertedBlockIds: z.array(z.string()),
           expanded: z.boolean(),
+          warnings: z.array(z.string()),
         })
         .strict(),
       annotations: WRITE_IDEMPOTENT,
@@ -395,7 +430,11 @@ export function registerBlockTools(
       try {
         const result = await updateBlockMarkdown(client, blockId, markdown);
         await client.flushTransaction();
-        return toolResult({ updated: blockId, ...result });
+        return toolResult({
+          updated: blockId,
+          ...result,
+          warnings: metadataWarningsForBodyMarkdown(markdown),
+        });
       } catch (err) {
         return toolError(`siyuan_update_block failed: ${String(err)}`);
       }
