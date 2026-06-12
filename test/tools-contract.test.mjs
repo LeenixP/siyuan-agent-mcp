@@ -4,6 +4,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerKnowledgeTools } from "../dist/tools/knowledge.js";
 import { registerDocTools } from "../dist/tools/docs.js";
 import { registerBlockTools } from "../dist/tools/blocks.js";
+import { registerAssetTools } from "../dist/tools/assets.js";
 
 const options = {
   readOnlyMode: false,
@@ -26,6 +27,16 @@ class FakeClient {
     const response = this.responses.shift();
     if (response instanceof Error) throw response;
     return typeof response === "function" ? response(endpoint, body) : response;
+  }
+
+  async requestForm(endpoint, form) {
+    this.calls.push({ endpoint, form });
+    if (this.responses.length === 0) {
+      throw new Error(`No fake response queued for ${endpoint}`);
+    }
+    const response = this.responses.shift();
+    if (response instanceof Error) throw response;
+    return typeof response === "function" ? response(endpoint, form) : response;
   }
 
   async flushTransaction() {
@@ -364,4 +375,108 @@ test("siyuan_move_block omits absent anchors for previousID-only moves", async (
     },
   });
   assert.equal(result.structuredContent.moved, blockId);
+});
+
+test("siyuan_upload_assets uploads multipart text payload and can insert generated asset markdown", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const parentID = "20240101010100-docroot";
+  const insertedID = "20240101010101-abcdef0";
+  const client = new FakeClient([
+    { errFiles: [], succMap: { "sample.png": "assets/sample-20240101010101-abcdef0.png" } },
+    [{ doOperations: [{ id: insertedID, action: "insert" }] }],
+  ]);
+  registerAssetTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_upload_assets.handler({
+    files: [{ sourceType: "text", filename: "sample.png", content: "fake image bytes" }],
+    parentID,
+    insertAfterUpload: true,
+  });
+
+  assert.equal(client.calls[0].endpoint, "/api/asset/upload");
+  assert.ok(Array.from(client.calls[0].form.keys()).includes("file[]"));
+  assert.equal(client.calls[1].endpoint, "/api/block/insertBlock");
+  assert.equal(client.calls[1].body.parentID, parentID);
+  assert.equal(
+    client.calls[1].body.data,
+    "![sample](<assets/sample-20240101010101-abcdef0.png>)"
+  );
+  assert.equal(result.structuredContent.inserted, true);
+  assert.equal(result.structuredContent.insertedBlockId, insertedID);
+});
+
+test("siyuan_import_local_assets lets the kernel copy large local assets and insert them", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const docId = "20240101010100-docroot";
+  const insertedID = "20240101010102-abcdef1";
+  const client = new FakeClient([
+    { succMap: { "clip.mp4": "assets/clip-20240101010101-abcdef0.mp4" } },
+    [{ doOperations: [{ id: insertedID, action: "insert" }] }],
+  ]);
+  registerAssetTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_import_local_assets.handler({
+    docId,
+    assetPaths: ["/Users/me/Videos/clip.mp4"],
+    isUpload: true,
+    insertAfterImport: true,
+    parentID: docId,
+  });
+
+  assert.deepEqual(client.calls[0], {
+    endpoint: "/api/asset/insertLocalAssets",
+    body: {
+      id: docId,
+      assetPaths: ["/Users/me/Videos/clip.mp4"],
+      isUpload: true,
+    },
+  });
+  assert.equal(client.calls[1].body.data, '<video controls="controls" src="assets/clip-20240101010101-abcdef0.mp4"></video>');
+  assert.equal(result.structuredContent.importedCount, 1);
+  assert.equal(result.structuredContent.insertedBlockId, insertedID);
+});
+
+test("siyuan_insert_asset_blocks infers audio links and inserts safe HTML", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const parentID = "20240101010100-docroot";
+  const insertedID = "20240101010103-abcdef2";
+  const client = new FakeClient([
+    [{ doOperations: [{ id: insertedID, action: "insert" }] }],
+  ]);
+  registerAssetTools(server, client, options);
+
+  const result = await server._registeredTools.siyuan_insert_asset_blocks.handler({
+    assets: [{ path: "assets/audio-20240101010101-abcdef0.mp3" }],
+    parentID,
+  });
+
+  assert.equal(client.calls[0].endpoint, "/api/block/insertBlock");
+  assert.equal(client.calls[0].body.data, '<audio controls="controls" src="assets/audio-20240101010101-abcdef0.mp3"></audio>');
+  assert.equal(result.structuredContent.assets[0].kind, "audio");
+});
+
+test("siyuan_insert_slash_block creates iframe and diagram slash-menu blocks", async () => {
+  const server = new McpServer({ name: "test", version: "1.0.0" });
+  const parentID = "20240101010100-docroot";
+  const client = new FakeClient([
+    [{ doOperations: [{ id: "20240101010104-abcdef3", action: "insert" }] }],
+    [{ doOperations: [{ id: "20240101010105-abcdef4", action: "insert" }] }],
+  ]);
+  registerAssetTools(server, client, options);
+
+  await server._registeredTools.siyuan_insert_slash_block.handler({
+    kind: "iframe",
+    url: "https://example.com/embed",
+    parentID,
+  });
+  const diagram = await server._registeredTools.siyuan_insert_slash_block.handler({
+    kind: "mermaid",
+    content: "graph TD\nA-->B",
+    parentID,
+  });
+
+  assert.match(client.calls[0].body.data, /^<iframe sandbox=/);
+  assert.match(client.calls[0].body.data, /src="https:\/\/example.com\/embed"/);
+  assert.equal(client.calls[2].body.data, "```mermaid\ngraph TD\nA-->B\n```");
+  assert.equal(diagram.structuredContent.kind, "mermaid");
 });

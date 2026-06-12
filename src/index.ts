@@ -15,6 +15,7 @@ import { registerAttrTools } from "./tools/attrs.js";
 import { registerNotebookTools } from "./tools/notebooks.js";
 import { registerKnowledgeTools } from "./tools/knowledge.js";
 import { registerSystemTools } from "./tools/system.js";
+import { registerAssetTools } from "./tools/assets.js";
 import { registerResources } from "./resources.js";
 import type { ToolRegistrationOptions } from "./tooling.js";
 
@@ -24,7 +25,7 @@ async function main(): Promise<void> {
 
   const server = new McpServer({
     name: "siyuan-agent-mcp",
-    version: "3.1.1",
+    version: "3.1.5",
   });
 
   const registrationOptions: ToolRegistrationOptions = {
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
   registerSearchTools(server, client, registrationOptions);
   registerReadTools(server, client, registrationOptions);
   registerKnowledgeTools(server, client, registrationOptions);
+  registerAssetTools(server, client, registrationOptions);
   registerDocTools(server, client, registrationOptions);
   registerBlockTools(server, client, registrationOptions);
   registerAttrTools(server, client, registrationOptions);

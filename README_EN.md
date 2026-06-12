@@ -7,7 +7,7 @@
 
 A high-quality MCP Server for [SiYuan Note](https://github.com/siyuan-note/siyuan). It lets MCP clients such as Claude Code, OpenCode, and Cursor safely read, search, write, and reorganize your local SiYuan workspace through the SiYuan HTTP Kernel API.
 
-[中文文档](./README.md) · [Release notes](./releases/v3.1.4.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
+[中文文档](./README.md) · [Release notes](./releases/v3.1.5.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
 ## What Can It Do
 
@@ -17,6 +17,7 @@ A high-quality MCP Server for [SiYuan Note](https://github.com/siyuan-note/siyua
 | Knowledge-base cleanup | Move documents in batches, rename documents, check broken references, and find unused or missing assets |
 | Writing and revision | Create documents, append blocks, update blocks, batch insert, batch update, and refresh the index immediately after writes |
 | Daily notes and inbox | Create today's daily note automatically and append quick thoughts, meeting notes, tasks, or reading excerpts |
+| Slash-menu rich content | Upload or import assets and insert images, files, audio, video, iframes, HTML, math, tables, callouts, and diagram code blocks |
 | Safe analysis | Run bounded SQL or structured `blocks` queries for read-only analysis with default result limits and dangerous-statement guards |
 | Controlled access | Keep the server mounted in MCP clients with read-only mode, hidden dangerous tools, and forced confirmation for deletes |
 
@@ -140,6 +141,8 @@ After read access works, set `SIYUAN_READ_ONLY` to `false` and restart the clien
 | Delete content | `siyuan_delete_block` or `siyuan_remove_doc`; both require a matching `confirmId` |
 | Capture into today's daily note | `siyuan_append_daily_note_block` |
 | Inspect tags, bookmarks, and assets | `siyuan_list_tags`, `siyuan_list_bookmarks`, `siyuan_search_assets` |
+| Upload and insert images/assets | Use `siyuan_upload_assets` for small files; `siyuan_import_local_assets` for large media or kernel-local paths; `siyuan_insert_asset_blocks` for existing paths |
+| Insert slash-menu content | `siyuan_insert_slash_block` supports image/audio/video/file/iframe/widget/html/code/math/callout/table/mermaid/plantuml and more |
 | Run read-only statistics or analysis | Prefer `siyuan_query_blocks`; use `siyuan_sql_query` only for advanced bounded queries |
 
 ## Key Design Choices
@@ -150,6 +153,8 @@ After read access works, set `SIYUAN_READ_ONLY` to `false` and restart the clien
 | Structured output | Tools return both text summaries and typed structured content so clients can parse results reliably |
 | Read-after-write behavior | Write tools flush SiYuan transactions before returning, reducing "written but not searchable yet" surprises |
 | Markdown protection | Write tools convert literal `\n` into real line breaks when needed, so multi-line Markdown is not parsed as one line |
+| Asset write workflows | Supports multipart upload, kernel-local path import, upload-then-insert, and reusable generated Markdown snippets |
+| Slash-menu semantic tools | Promotes SiYuan `/` menu items such as image, audio/video, iframe, HTML, math, callout, and diagram blocks into explicit MCP tools |
 | Read-only first | `SIYUAN_READ_ONLY=true` removes all write and state-changing tools from the exposed tool list |
 | Dangerous tools hidden | High-risk tools such as notebook deletion are not exposed unless explicitly enabled |
 | Strong delete confirmation | Block, document, and notebook deletes all require matching confirmation parameters |
@@ -247,6 +252,18 @@ For day-to-day use, start with the "Common Task Cheat Sheet" above. The complete
 </details>
 
 <details>
+<summary><strong>Rich Content & Asset Writes</strong></summary>
+
+| Tool | Description |
+|---|---|
+| `siyuan_upload_assets` | Upload local small files, base64 payloads, or text content through `/api/asset/upload`; can directly insert generated asset blocks after upload |
+| `siyuan_import_local_assets` | Ask the SiYuan Kernel to import or link local paths it can access, suitable for large videos, large audio, and directories |
+| `siyuan_insert_asset_blocks` | Insert existing `assets/...`, `file://`, or http(s) resource paths as image, audio, video, or file-link blocks |
+| `siyuan_insert_slash_block` | Insert common `/` menu content: image/file/audio/video links, iframe, widget, HTML, code, math, callout, table, ABC, ECharts, FlowChart, Graphviz, Mermaid, Mind map, and PlantUML |
+
+</details>
+
+<details>
 <summary><strong>Document Management</strong></summary>
 
 | Tool | Description |
@@ -312,6 +329,9 @@ Read content
 Edit and organize
   -> siyuan_append_block / siyuan_insert_block / siyuan_update_block / batch tools / move tools
 
+Write rich content
+  -> siyuan_upload_assets / siyuan_import_local_assets / siyuan_insert_asset_blocks / siyuan_insert_slash_block
+
 Analyze and archive
   -> siyuan_query_blocks / siyuan_sql_query / daily-note tools
 ```
@@ -321,6 +341,8 @@ Important behavior:
 - `siyuan_create_doc` does not create same-name duplicate documents when the target human-readable path already exists. It returns the existing document ID with `existed=true` and `created=false`.
 - `siyuan_insert_block` requires exactly one anchor: `previousID`, `nextID`, or `parentID`.
 - `siyuan_batch_insert_blocks` reverses same-parent parentID-only batches before sending them to SiYuan so the final document order matches the input order.
+- `siyuan_upload_assets` streams files through the MCP process and defaults to a 512MB per-file cap; use `siyuan_import_local_assets` for large files so the SiYuan Kernel copies them directly.
+- `siyuan_insert_slash_block` inserts rich content with SiYuan-parseable Markdown/HTML snippets so callers do not need to handwrite `<video>`, `<iframe>`, or diagram templates.
 - `siyuan_remove_doc` and `siyuan_delete_block` require `confirmId` equal to the target ID.
 - `siyuan_remove_notebook` is hidden by default. Enabling it requires `SIYUAN_ENABLE_DANGEROUS_TOOLS=true`, and each call must provide both `confirmId` and exact `confirmText`.
 - Only documents in open notebooks are covered by the search index.
@@ -344,6 +366,8 @@ siyuan_health
   -> siyuan_get_doc_outline / siyuan_get_backlinks
   -> siyuan_create_doc
   -> siyuan_append_block
+  -> siyuan_insert_slash_block kind=mermaid
+  -> siyuan_upload_assets insertAfterUpload=true
   -> siyuan_batch_update_blocks
   -> siyuan_search_notes confirms indexing
   -> siyuan_delete_block with confirmId

@@ -83,6 +83,13 @@ export const WRITE_SAFE = {
   openWorldHint: false,
 } satisfies ToolAnnotations;
 
+export const WRITE_EXTERNAL = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+} satisfies ToolAnnotations;
+
 export const WRITE_IDEMPOTENT = {
   readOnlyHint: false,
   destructiveHint: false,

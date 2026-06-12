@@ -7,7 +7,7 @@
 
 面向 [SiYuan 笔记](https://github.com/siyuan-note/siyuan) 的高质量 MCP Server。它让 Claude Code、OpenCode、Cursor 等 MCP 客户端通过 SiYuan HTTP Kernel API 安全地读取、搜索、写入和整理你的本地笔记工作空间。
 
-[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.4.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
+[English documentation](./README_EN.md) · [Release notes](./releases/v3.1.5.md) · [npm package](https://www.npmjs.com/package/siyuan-agent-mcp)
 
 ## 你可以用它做什么
 
@@ -17,6 +17,7 @@
 | 整理知识库 | 批量移动文档、重命名文档、检查失效引用、发现未使用或缺失资产 |
 | 写入和修订 | 创建文档、追加块、更新块、批量插入、批量更新，并在写入后立即刷新索引 |
 | 日记和 inbox | 自动创建当天日记，将临时想法、会议纪要、任务或阅读摘录追加到日记 |
+| 斜杠菜单富内容 | 上传或导入资源，插入图片、文件、音频、视频、iframe、HTML、公式、表格、callout 和图表代码块 |
 | 安全分析 | 使用受限 SQL 或结构化 blocks 查询做只读分析，默认限制结果规模和危险语句 |
 | 受控接入 | 只读模式、危险工具默认隐藏、删除操作强制确认，适合长期挂在 MCP 客户端里使用 |
 
@@ -140,6 +141,8 @@ curl -H "Authorization: Token $SIYUAN_API_TOKEN" http://127.0.0.1:6806/api/syste
 | 删除内容 | `siyuan_delete_block` 或 `siyuan_remove_doc`，必须提供匹配的 `confirmId` |
 | 记录到当天日记 | `siyuan_append_daily_note_block` |
 | 查标签、书签和资产 | `siyuan_list_tags`、`siyuan_list_bookmarks`、`siyuan_search_assets` |
+| 上传并插入图片/资源 | 小文件用 `siyuan_upload_assets`；大音视频或本机路径用 `siyuan_import_local_assets`；已有资源路径用 `siyuan_insert_asset_blocks` |
+| 插入斜杠菜单内容 | `siyuan_insert_slash_block`，支持 image/audio/video/file/iframe/widget/html/code/math/callout/table/mermaid/plantuml 等 |
 | 做只读统计分析 | 优先 `siyuan_query_blocks`，高级场景再用 `siyuan_sql_query` |
 
 ## 关键设计
@@ -150,6 +153,8 @@ curl -H "Authorization: Token $SIYUAN_API_TOKEN" http://127.0.0.1:6806/api/syste
 | 结构化输出 | 工具返回文本摘要和 typed structured content，方便客户端稳定解析 |
 | 写入后可读 | 写入工具返回前会刷新 SiYuan transaction，减少“刚写完搜不到”的问题 |
 | Markdown 保护 | 写入工具会把字面量 `\n` 转成真实换行，避免多行 Markdown 被当作单行文本 |
+| 资源写入工作流 | 支持 multipart 上传、内核本地路径导入、上传后自动插入，并返回可复用的 Markdown 片段 |
+| 斜杠菜单语义工具 | 把 SiYuan `/` 菜单中的图片、音视频、iframe、HTML、公式、callout 和图表类内容提升为显式 MCP 工具 |
 | 只读优先 | `SIYUAN_READ_ONLY=true` 会从工具列表中移除所有写入和状态变更工具 |
 | 危险工具隐藏 | 删除笔记本等高风险工具默认不暴露，需要显式开启 |
 | 删除强确认 | 删除块、删除文档、删除笔记本都需要匹配的确认参数 |
@@ -247,6 +252,18 @@ Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 </details>
 
 <details>
+<summary><strong>富内容与资源写入</strong></summary>
+
+| 工具 | 说明 |
+|---|---|
+| `siyuan_upload_assets` | 通过 `/api/asset/upload` 上传本机小文件、base64 或文本内容；可在上传后直接插入生成的资源块 |
+| `siyuan_import_local_assets` | 让 SiYuan Kernel 直接导入或链接其可访问的本地路径，适合大视频、大音频和目录 |
+| `siyuan_insert_asset_blocks` | 将已有 `assets/...`、`file://` 或 http(s) 资源路径插入为图片、音频、视频或文件链接块 |
+| `siyuan_insert_slash_block` | 插入常见 `/` 菜单内容：图片/文件/音频/视频链接、iframe、widget、HTML、代码块、数学公式、callout、表格、ABC、ECharts、FlowChart、Graphviz、Mermaid、Mind map、PlantUML |
+
+</details>
+
+<details>
 <summary><strong>文档管理</strong></summary>
 
 | 工具 | 说明 |
@@ -312,6 +329,9 @@ Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 编辑整理
   -> siyuan_append_block / siyuan_insert_block / siyuan_update_block / batch tools / move tools
 
+富内容写入
+  -> siyuan_upload_assets / siyuan_import_local_assets / siyuan_insert_asset_blocks / siyuan_insert_slash_block
+
 分析和归档
   -> siyuan_query_blocks / siyuan_sql_query / daily-note tools
 ```
@@ -321,6 +341,8 @@ Server 注册了以下 URI 模板，客户端可以直接获取上下文：
 - `siyuan_create_doc` 在目标可读路径已存在时不会创建同名重复文档，而是返回已有文档 ID，并设置 `existed=true`、`created=false`。
 - `siyuan_insert_block` 必须且只能提供一个锚点：`previousID`、`nextID` 或 `parentID`。
 - `siyuan_batch_insert_blocks` 对同一个 `parentID` 的 parentID-only 批量插入会在发送给 SiYuan 前反向提交，从而让最终文档顺序与输入顺序一致。
+- `siyuan_upload_assets` 会把文件流经 MCP 进程，默认单文件上限 512MB；大文件优先用 `siyuan_import_local_assets` 让 SiYuan Kernel 直接复制。
+- `siyuan_insert_slash_block` 使用 SiYuan 可解析的 Markdown/HTML 片段插入富内容，避免调用方手写 `<video>`、`<iframe>` 或图表代码块模板。
 - `siyuan_remove_doc` 和 `siyuan_delete_block` 必须提供与目标 ID 相同的 `confirmId`。
 - `siyuan_remove_notebook` 默认隐藏；启用需要 `SIYUAN_ENABLE_DANGEROUS_TOOLS=true`，每次调用还必须提供 `confirmId` 和精确 `confirmText`。
 - 只有已打开笔记本中的文档会被搜索索引覆盖。
@@ -344,6 +366,8 @@ siyuan_health
   -> siyuan_get_doc_outline / siyuan_get_backlinks
   -> siyuan_create_doc
   -> siyuan_append_block
+  -> siyuan_insert_slash_block kind=mermaid
+  -> siyuan_upload_assets insertAfterUpload=true
   -> siyuan_batch_update_blocks
   -> siyuan_search_notes 确认已索引
   -> siyuan_delete_block with confirmId

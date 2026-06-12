@@ -32,6 +32,15 @@ export class SiYuanClient {
     return this.withConcurrency(() => this.requestWithRetry<T>(endpoint, body));
   }
 
+  /**
+   * POST multipart/form-data to a SiYuan endpoint and unwrap the standard
+   * {code,msg,data} envelope. Do not set Content-Type manually; fetch adds the
+   * multipart boundary.
+   */
+  async requestForm<T = unknown>(endpoint: string, form: FormData): Promise<T> {
+    return this.withConcurrency(() => this.requestFormOnce<T>(endpoint, form));
+  }
+
   private async withConcurrency<T>(operation: () => Promise<T>): Promise<T> {
     if (this.activeRequests >= this.maxConcurrency) {
       await new Promise<void>((resolve) => {
@@ -124,6 +133,64 @@ export class SiYuanClient {
     }
 
     return json;
+  }
+
+  private async requestFormOnce<T = unknown>(
+    endpoint: string,
+    form: FormData
+  ): Promise<T> {
+    const headers: Record<string, string> = {};
+    if (this.apiToken) {
+      headers["Authorization"] = `Token ${this.apiToken}`;
+    }
+
+    let response: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      response = await fetch(`${this.apiUrl}${endpoint}`, {
+        method: "POST",
+        headers,
+        body: form,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      const reason =
+        err instanceof Error && err.name === "AbortError"
+          ? `request timed out after ${this.timeoutMs}ms`
+          : String(err);
+      throw new Error(
+        `Failed to reach SiYuan at ${sanitizeUrl(this.apiUrl)} [${endpoint}]: ${reason}. ` +
+          `Is SiYuan running with the kernel API enabled?`
+      );
+    } finally {
+      clearTimeout(timeout);
+    }
+
+    if (response.ok === false) {
+      throw new Error(
+        `SiYuan HTTP error [${endpoint}]: ${response.status} ${response.statusText}. ` +
+          `Check SIYUAN_API_URL, token permissions, and whether the kernel is available.`
+      );
+    }
+
+    let json: SiYuanResponse<T>;
+    try {
+      json = (await response.json()) as SiYuanResponse<T>;
+    } catch {
+      throw new Error(
+        `SiYuan returned a non-JSON response [${endpoint}] (HTTP ${response.status}). ` +
+          `Check that SIYUAN_API_URL points at the kernel API.`
+      );
+    }
+
+    if (json.code !== 0) {
+      throw new Error(
+        `SiYuan API error [${endpoint}]: code=${json.code} msg="${json.msg || "(empty)"}".`
+      );
+    }
+
+    return json.data;
   }
 
   /**
